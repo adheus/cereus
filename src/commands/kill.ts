@@ -1,0 +1,90 @@
+import chalk from "chalk";
+import { confirm } from "@inquirer/prompts";
+import { findSession, removeSession, loadSessions, saveSessions } from "../lib/sessions.js";
+import { killSession, killPane } from "../lib/tmux.js";
+import { removeWorktree } from "../lib/git.js";
+import { removeContextFile } from "../lib/context.js";
+
+interface KillOptions {
+  all?: boolean;
+  clean?: boolean;
+  force?: boolean;
+}
+
+export async function killCommand(
+  identifier: string | undefined,
+  options: KillOptions,
+): Promise<void> {
+  if (options.all) {
+    await killAll(options);
+    return;
+  }
+
+  if (!identifier) {
+    console.error(chalk.red("Provide a session identifier or use --all."));
+    process.exit(1);
+  }
+
+  const session = findSession(identifier);
+  if (!session) {
+    console.error(chalk.red(`Session '${identifier}' not found.`));
+    process.exit(1);
+  }
+
+  if (!options.force) {
+    const yes = await confirm({
+      message: `Kill session '${identifier}'?`,
+      default: true,
+    });
+    if (!yes) return;
+  }
+
+  if (session.tmuxPane) {
+    killPane(session.tmuxPane);
+    console.log(chalk.green("✔"), `Pane '${session.tmuxPane}' killed.`);
+  } else {
+    killSession(session.tmuxSession);
+    console.log(chalk.green("✔"), `Tmux session '${identifier}' killed.`);
+  }
+
+  if (options.clean) {
+    removeContextFile(session.worktreePath);
+    removeWorktree(session.repoPath, session.worktreePath);
+    console.log(chalk.green("✔"), "Worktree removed.");
+  }
+
+  removeSession(identifier);
+  console.log(chalk.green("✔"), `Session '${identifier}' cleaned up.`);
+}
+
+async function killAll(options: KillOptions): Promise<void> {
+  const sessions = loadSessions();
+  if (sessions.length === 0) {
+    console.log(chalk.blue("▸"), "No sessions to kill.");
+    return;
+  }
+
+  if (!options.force) {
+    const yes = await confirm({
+      message: `Kill all ${sessions.length} session(s)?`,
+      default: false,
+    });
+    if (!yes) return;
+  }
+
+  for (const session of sessions) {
+    if (session.tmuxPane) {
+      killPane(session.tmuxPane);
+    } else {
+      killSession(session.tmuxSession);
+    }
+    if (options.clean) {
+      removeContextFile(session.worktreePath);
+      removeWorktree(session.repoPath, session.worktreePath);
+    }
+    console.log(chalk.green("✔"), `Killed '${session.id}'`);
+  }
+
+  saveSessions([]);
+  console.log(chalk.green("✔"), "All sessions cleaned up.");
+}

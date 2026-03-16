@@ -1,0 +1,33 @@
+{
+  "name": "agentmux",
+  "version": "0.1.0",
+  "description": "Parallel AI coding sessions with git worktrees + tmux + agents",
+  "type": "module",
+  "bin": {
+    "agentmux": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsup",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "tmux",
+    "worktree",
+    "cursor"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@inquirer/prompts": "^8.3.2",
+    "chalk": "^5.6.2",
+    "commander": "^14.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
