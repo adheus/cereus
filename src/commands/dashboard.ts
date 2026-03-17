@@ -206,6 +206,12 @@ export async function dashboardCommand(): Promise<void> {
     if (previewPaneId && paneExists(previewPaneId)) {
       killPane(previewPaneId);
     }
+    // Restore automatic window naming
+    try {
+      execFileSync("tmux", [
+        "set-option", "-w", "-t", dashboardPaneId, "automatic-rename", "on",
+      ]);
+    } catch { /* ignore */ }
     renderer.destroy();
   }
 
@@ -263,6 +269,13 @@ export async function dashboardCommand(): Promise<void> {
         } catch { /* ignore */ }
       }
     }
+
+    // Set the window name to the session ID so it shows in the tmux status bar
+    try {
+      execFileSync("tmux", [
+        "rename-window", "-t", dashboardPaneId, session.id,
+      ]);
+    } catch { /* ignore */ }
 
     focusDashboard();
   }
