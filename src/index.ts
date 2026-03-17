@@ -5,6 +5,7 @@ import { attachCommand } from "./commands/attach.js";
 import { killCommand } from "./commands/kill.js";
 import { aliasAdd, aliasList, aliasRemove } from "./commands/alias.js";
 import { configShow, configSet, runSetup } from "./commands/config.js";
+import { dashboardCommand } from "./commands/dashboard.js";
 
 const program = new Command();
 
@@ -50,6 +51,12 @@ program
   .option("--clean", "Also remove the git worktree")
   .option("-f, --force", "Skip confirmation prompt")
   .action(killCommand);
+
+program
+  .command("dashboard")
+  .alias("dash")
+  .description("Open TUI dashboard for managing sessions")
+  .action(dashboardCommand);
 
 const alias = program
   .command("alias")
