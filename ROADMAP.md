@@ -1,4 +1,4 @@
-# Agentmux Roadmap
+# Cereus Roadmap
 
 ## v0.1 — Foundation (current)
 - [x] CLI with `new`, `list`, `attach`, `kill`, `alias`, `config` commands
@@ -6,12 +6,12 @@
 - [x] Tmux session management (window / split / hidden modes)
 - [x] Config file with workspace root, default agent, aliases
 - [x] Session tracking in sessions.json
-- [x] AGENTMUX.md context file in worktrees
+- [x] CEREUS.md context file in worktrees
 - [x] First-time interactive setup
 
 ## v0.2 — Polish & Reliability
 - [ ] Session auto-cleanup (detect dead tmux sessions on `list`)
-- [ ] `agentmux logs <identifier>` command to capture pane output
+- [ ] `cereus logs <identifier>` command to capture pane output
 - [ ] Better error messages and edge case handling
 - [ ] Support for `--base <branch>` to set worktree base branch
 - [ ] Pass session context (other active sessions) to agent prompt

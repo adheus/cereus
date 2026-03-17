@@ -16,7 +16,7 @@ export function attachCommand(identifier: string, options: AttachOptions): void 
   const session = findSession(identifier);
   if (!session) {
     console.error(chalk.red(`Session '${identifier}' not found.`));
-    console.log("Run 'agentmux list' to see available sessions.");
+    console.log("Run 'cereus list' to see available sessions.");
     process.exit(1);
   }
 

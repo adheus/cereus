@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { AgentmuxConfig, resolveWorkspacePath } from "./config.js";
+import { CereusConfig, resolveWorkspacePath } from "./config.js";
 import { isGitRepo } from "./git.js";
 
 export interface RepoMatch {
@@ -14,7 +14,7 @@ export interface RepoMatch {
  */
 export function resolveRepo(
   name: string,
-  config: AgentmuxConfig,
+  config: CereusConfig,
 ): RepoMatch | null {
   const workspace = resolveWorkspacePath(config);
 
