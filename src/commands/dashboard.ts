@@ -108,32 +108,16 @@ function resolveSessionPaneId(session: Session): string | null {
   return null;
 }
 
-function openPreviewPane(session: Session, dashboardPaneId: string): string {
-  const paneId = execFileSync(
+function createPreviewSplit(cwd: string, dashboardPaneId: string): string {
+  return execFileSync(
     "tmux",
     [
       "split-window", "-h", "-t", dashboardPaneId,
-      "-c", session.worktreePath,
+      "-c", cwd,
       "-P", "-F", "#{pane_id}", "-l", "70%",
     ],
     { encoding: "utf-8" },
   ).trim();
-
-  const sessionPaneId = resolveSessionPaneId(session);
-  if (sessionPaneId) {
-    try {
-      execFileSync(
-        "tmux",
-        ["swap-pane", "-s", sessionPaneId, "-t", paneId],
-        { stdio: "ignore" },
-      );
-      return paneId;
-    } catch {
-      // fallback
-    }
-  }
-
-  return paneId;
 }
 
 function listWorkspaceRepos(workspacePath: string, maxDepth = 3): string[] {
@@ -183,6 +167,7 @@ export async function dashboardCommand(): Promise<void> {
 
   let selectedIndex = 0;
   let previewPaneId: string | null = null;
+  let displacedPaneId: string | null = null;
   let swappedSessionId: string | null = null;
   const expandedSessions = new Set<string>();
   const collapsedRepos = new Set<string>();
@@ -204,31 +189,24 @@ export async function dashboardCommand(): Promise<void> {
     enableMouseMovement: false,
   });
 
-  function getSwappedSession(): Session | undefined {
-    if (!swappedSessionId) return undefined;
-    for (const g of groups) {
-      for (const s of g.sessions) {
-        if (s.id === swappedSessionId) return s;
-      }
-    }
-    return undefined;
-  }
-
   function cleanup() {
-    const swapped = getSwappedSession();
-    const swappedPaneId = swapped ? resolveSessionPaneId(swapped) : null;
-    if (swappedPaneId && previewPaneId && paneExists(previewPaneId)) {
+    // Restore swapped pane to its original session, then clean up
+    if (displacedPaneId && previewPaneId && paneExists(previewPaneId) && paneExists(displacedPaneId)) {
       try {
         execFileSync(
           "tmux",
-          ["swap-pane", "-s", previewPaneId, "-t", swappedPaneId],
+          ["swap-pane", "-s", previewPaneId, "-t", displacedPaneId],
           { stdio: "ignore" },
         );
       } catch { /* ignore */ }
-    }
-    if (previewPaneId && paneExists(previewPaneId)) {
+      // After restore: displacedPaneId is back in dashboard (the original empty preview pane)
+      killPane(displacedPaneId);
+    } else if (previewPaneId && paneExists(previewPaneId)) {
       killPane(previewPaneId);
     }
+    previewPaneId = null;
+    displacedPaneId = null;
+    swappedSessionId = null;
     // Restore automatic window naming
     try {
       execFileSync("tmux", [
@@ -245,16 +223,17 @@ export async function dashboardCommand(): Promise<void> {
   }
 
   function restoreSwappedPane() {
-    const prevSwapped = getSwappedSession();
-    const prevPaneId = prevSwapped ? resolveSessionPaneId(prevSwapped) : null;
-    if (prevPaneId && previewPaneId && paneExists(previewPaneId)) {
+    if (displacedPaneId && previewPaneId && paneExists(previewPaneId) && paneExists(displacedPaneId)) {
       try {
         execFileSync(
           "tmux",
-          ["swap-pane", "-s", previewPaneId, "-t", prevPaneId],
+          ["swap-pane", "-s", previewPaneId, "-t", displacedPaneId],
           { stdio: "ignore" },
         );
       } catch { /* ignore */ }
+      // After swap-back: displacedPaneId (original preview pane) is back in dashboard
+      previewPaneId = displacedPaneId;
+      displacedPaneId = null;
       swappedSessionId = null;
     }
   }
@@ -265,9 +244,32 @@ export async function dashboardCommand(): Promise<void> {
     const sessionPaneId = resolveSessionPaneId(session);
 
     if (!previewPaneId || !paneExists(previewPaneId)) {
-      previewPaneId = openPreviewPane(session, dashboardPaneId);
+      // Create a new preview split pane
+      const splitPaneId = createPreviewSplit(session.worktreePath, dashboardPaneId);
+      previewPaneId = splitPaneId;
+
       if (sessionPaneId) {
-        swappedSessionId = session.id;
+        // Swap session's pane into the preview position
+        try {
+          execFileSync(
+            "tmux",
+            ["swap-pane", "-s", sessionPaneId, "-t", splitPaneId],
+            { stdio: "ignore" },
+          );
+          // After swap: sessionPaneId is now in dashboard (preview position)
+          //             splitPaneId (original split) moved to session's tmux
+          displacedPaneId = splitPaneId;
+          previewPaneId = sessionPaneId;
+          swappedSessionId = session.id;
+        } catch {
+          // Swap failed, just cd to worktree in the split pane
+          try {
+            execFileSync("tmux", [
+              "send-keys", "-t", splitPaneId,
+              `cd ${session.worktreePath}`, "Enter",
+            ]);
+          } catch { /* ignore */ }
+        }
       }
     } else {
       if (sessionPaneId) {
@@ -277,6 +279,9 @@ export async function dashboardCommand(): Promise<void> {
             ["swap-pane", "-s", sessionPaneId, "-t", previewPaneId],
             { stdio: "ignore" },
           );
+          // After swap: sessionPaneId is in dashboard, previewPaneId went to session's tmux
+          displacedPaneId = previewPaneId;
+          previewPaneId = sessionPaneId;
           swappedSessionId = session.id;
         } catch {
           try {
@@ -299,7 +304,7 @@ export async function dashboardCommand(): Promise<void> {
     // Set the window name to the session ID so it shows in the tmux status bar
     try {
       execFileSync("tmux", [
-        "rename-window", "-t", dashboardPaneId, `${session.id} (agentmux)`,
+        "rename-window", "-t", dashboardPaneId, `${session.id} (cereus)`,
       ]);
     } catch { /* ignore */ }
 
@@ -695,24 +700,15 @@ export async function dashboardCommand(): Promise<void> {
       if (!row || row.type !== "session") return;
       const session = row.session;
 
-      if (
-        swappedSessionId === session.id &&
-        previewPaneId &&
-        paneExists(previewPaneId)
-      ) {
-        const killedPaneId = resolveSessionPaneId(session);
-        if (killedPaneId) {
-          try {
-            execFileSync(
-              "tmux",
-              ["swap-pane", "-s", previewPaneId, "-t", killedPaneId],
-              { stdio: "ignore" },
-            );
-          } catch { /* ignore */ }
+      if (swappedSessionId === session.id) {
+        // Kill the preview pane (which has the session's content after swap)
+        if (previewPaneId && paneExists(previewPaneId)) {
+          killPane(previewPaneId);
         }
-        swappedSessionId = null;
-        killPane(previewPaneId);
+        // The displaced pane will be cleaned up when we kill the session below
         previewPaneId = null;
+        displacedPaneId = null;
+        swappedSessionId = null;
       }
 
       if (session.tmuxPane) {
@@ -802,7 +798,24 @@ export async function dashboardCommand(): Promise<void> {
       }
 
       const session = row.session;
-      if (session.status !== "running") return;
+
+      // Restart stopped sessions: re-create tmux session and launch agent
+      if (session.status !== "running") {
+        const config = loadConfig();
+        const tmuxName = session.tmuxSession;
+
+        try {
+          execFileSync(
+            "tmux",
+            ["new-session", "-d", "-s", tmuxName, "-c", session.worktreePath],
+            { stdio: "ignore" },
+          );
+        } catch { /* ignore */ }
+
+        const agentCmd = [session.agent, ...config.agentArgs].join(" ");
+        sendKeys(tmuxName, agentCmd);
+        session.status = "running";
+      }
 
       attachSession(session);
       render();
