@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getAgentmuxDir, ensureAgentmuxDir } from "./config.js";
+import { getCereusDir, ensureCereusDir } from "./config.js";
 
 export interface Session {
   id: string;
@@ -17,7 +17,7 @@ export interface Session {
   createdAt: string;
 }
 
-const SESSIONS_FILE = path.join(getAgentmuxDir(), "sessions.json");
+const SESSIONS_FILE = path.join(getCereusDir(), "sessions.json");
 
 export function loadSessions(): Session[] {
   if (!fs.existsSync(SESSIONS_FILE)) {
@@ -28,7 +28,7 @@ export function loadSessions(): Session[] {
 }
 
 export function saveSessions(sessions: Session[]): void {
-  ensureAgentmuxDir();
+  ensureCereusDir();
   fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessions, null, 2) + "\n");
 }
 

@@ -10,7 +10,7 @@ import { dashboardCommand } from "./commands/dashboard.js";
 const program = new Command();
 
 program
-  .name("agentmux")
+  .name("cereus")
   .description(
     "Parallel AI coding sessions with git worktrees + tmux + agents",
   )

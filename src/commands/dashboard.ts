@@ -87,6 +87,27 @@ function getCurrentPaneId(): string {
   }
 }
 
+/** Resolve the actual tmux pane ID for a session (works for both pane-based and session-based) */
+function resolveSessionPaneId(session: Session): string | null {
+  if (session.tmuxPane && paneExists(session.tmuxPane)) {
+    return session.tmuxPane;
+  }
+  if (session.tmuxSession && sessionExists(session.tmuxSession)) {
+    try {
+      const output = execFileSync(
+        "tmux",
+        ["list-panes", "-t", session.tmuxSession, "-F", "#{pane_id}"],
+        { encoding: "utf-8" },
+      ).trim();
+      const panes = output.split("\n").filter(Boolean);
+      return panes[0] || null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 function openPreviewPane(session: Session, dashboardPaneId: string): string {
   const paneId = execFileSync(
     "tmux",
@@ -98,11 +119,12 @@ function openPreviewPane(session: Session, dashboardPaneId: string): string {
     { encoding: "utf-8" },
   ).trim();
 
-  if (session.tmuxPane && paneExists(session.tmuxPane)) {
+  const sessionPaneId = resolveSessionPaneId(session);
+  if (sessionPaneId) {
     try {
       execFileSync(
         "tmux",
-        ["swap-pane", "-s", session.tmuxPane, "-t", paneId],
+        ["swap-pane", "-s", sessionPaneId, "-t", paneId],
         { stdio: "ignore" },
       );
       return paneId;
@@ -194,11 +216,12 @@ export async function dashboardCommand(): Promise<void> {
 
   function cleanup() {
     const swapped = getSwappedSession();
-    if (swapped?.tmuxPane && previewPaneId && paneExists(previewPaneId)) {
+    const swappedPaneId = swapped ? resolveSessionPaneId(swapped) : null;
+    if (swappedPaneId && previewPaneId && paneExists(previewPaneId)) {
       try {
         execFileSync(
           "tmux",
-          ["swap-pane", "-s", previewPaneId, "-t", swapped.tmuxPane],
+          ["swap-pane", "-s", previewPaneId, "-t", swappedPaneId],
           { stdio: "ignore" },
         );
       } catch { /* ignore */ }
@@ -223,11 +246,12 @@ export async function dashboardCommand(): Promise<void> {
 
   function restoreSwappedPane() {
     const prevSwapped = getSwappedSession();
-    if (prevSwapped?.tmuxPane && previewPaneId && paneExists(previewPaneId)) {
+    const prevPaneId = prevSwapped ? resolveSessionPaneId(prevSwapped) : null;
+    if (prevPaneId && previewPaneId && paneExists(previewPaneId)) {
       try {
         execFileSync(
           "tmux",
-          ["swap-pane", "-s", previewPaneId, "-t", prevSwapped.tmuxPane],
+          ["swap-pane", "-s", previewPaneId, "-t", prevPaneId],
           { stdio: "ignore" },
         );
       } catch { /* ignore */ }
@@ -238,17 +262,19 @@ export async function dashboardCommand(): Promise<void> {
   function attachSession(session: Session) {
     restoreSwappedPane();
 
+    const sessionPaneId = resolveSessionPaneId(session);
+
     if (!previewPaneId || !paneExists(previewPaneId)) {
       previewPaneId = openPreviewPane(session, dashboardPaneId);
-      if (session.tmuxPane && paneExists(session.tmuxPane)) {
+      if (sessionPaneId) {
         swappedSessionId = session.id;
       }
     } else {
-      if (session.tmuxPane && paneExists(session.tmuxPane)) {
+      if (sessionPaneId) {
         try {
           execFileSync(
             "tmux",
-            ["swap-pane", "-s", session.tmuxPane, "-t", previewPaneId],
+            ["swap-pane", "-s", sessionPaneId, "-t", previewPaneId],
             { stdio: "ignore" },
           );
           swappedSessionId = session.id;
@@ -294,8 +320,14 @@ export async function dashboardCommand(): Promise<void> {
     if (selectedIndex < 0) selectedIndex = 0;
 
     const children: any[] = [
-      Text({ content: " agentmux", fg: "#8888ff" }),
-      Text({ content: ` v${VERSION}`, fg: "#555555" }),
+      Text({ content: "  _  _", fg: "#33aa33" }),
+      Text({ content: " | || | _", fg: "#33aa33" }),
+      Text({ content: " | || || |   cereus", fg: "#33aa33" }),
+      Text({ content: " | || || |-", fg: "#33aa33" }),
+      Text({ content: `  \\_  || |   v${VERSION}`, fg: "#33aa33" }),
+      Text({ content: "    |  _/", fg: "#33aa33" }),
+      Text({ content: "   -| | \\", fg: "#33aa33" }),
+      Text({ content: "    |_|-", fg: "#33aa33" }),
       Text({ content: "" }),
     ];
 
@@ -529,7 +561,7 @@ export async function dashboardCommand(): Promise<void> {
           createWorktree(repoPath, worktreePath, identifier);
 
           const agent = config.agent;
-          const tmuxName = `am_${identifier}`;
+          const tmuxName = `cr_${identifier}`;
 
           try {
             execFileSync(
@@ -668,13 +700,16 @@ export async function dashboardCommand(): Promise<void> {
         previewPaneId &&
         paneExists(previewPaneId)
       ) {
-        try {
-          execFileSync(
-            "tmux",
-            ["swap-pane", "-s", previewPaneId, "-t", session.tmuxPane!],
-            { stdio: "ignore" },
-          );
-        } catch { /* ignore */ }
+        const killedPaneId = resolveSessionPaneId(session);
+        if (killedPaneId) {
+          try {
+            execFileSync(
+              "tmux",
+              ["swap-pane", "-s", previewPaneId, "-t", killedPaneId],
+              { stdio: "ignore" },
+            );
+          } catch { /* ignore */ }
+        }
         swappedSessionId = null;
         killPane(previewPaneId);
         previewPaneId = null;

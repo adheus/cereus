@@ -6,7 +6,7 @@ import {
   loadConfig,
   configExists,
   resolveWorkspacePath,
-  AgentmuxConfig,
+  CereusConfig,
 } from "../lib/config.js";
 import { addSession, loadSessions } from "../lib/sessions.js";
 import { resolveRepo } from "../lib/repo.js";
@@ -45,19 +45,19 @@ export async function newCommand(
   options: NewOptions,
 ): Promise<void> {
   if (!configExists()) {
-    console.log(chalk.yellow("First time setup — let's configure agentmux.\n"));
+    console.log(chalk.yellow("First time setup — let's configure cereus.\n"));
     await runSetup();
   }
 
   const config = loadConfig();
   const mode = resolveMode(options, config);
   const agent = options.agent ?? config.agent;
-  const tmuxName = `am_${identifier}`;
+  const tmuxName = `cr_${identifier}`;
 
   const existing = loadSessions().find((s) => s.id === identifier);
   if (existing) {
     console.error(
-      chalk.red(`Session '${identifier}' already exists. Use 'agentmux attach ${identifier}' or 'agentmux kill ${identifier}'.`),
+      chalk.red(`Session '${identifier}' already exists. Use 'cereus attach ${identifier}' or 'cereus kill ${identifier}'.`),
     );
     process.exit(1);
   }
@@ -89,7 +89,7 @@ export async function newCommand(
         createSession(tmuxName, worktreePath);
         sendKeys(tmuxName, agentCmd);
         console.log(chalk.green("✔"), `Session '${identifier}' started (new tmux session — not inside tmux)`);
-        console.log(`\n  attach:  agentmux attach ${identifier}\n`);
+        console.log(`\n  attach:  cereus attach ${identifier}\n`);
       } else {
         const result = smartSplit(worktreePath, config.maxPanesPerWindow, identifier);
         tmuxPane = result.paneId;
@@ -118,8 +118,8 @@ export async function newCommand(
       createSession(tmuxName, worktreePath);
       sendKeys(tmuxName, agentCmd);
       console.log(chalk.green("✔"), `Session '${identifier}' started (hidden)`);
-      console.log(`\n  attach:  agentmux attach ${identifier}`);
-      console.log(`  kill:    agentmux kill ${identifier}\n`);
+      console.log(`\n  attach:  cereus attach ${identifier}`);
+      console.log(`  kill:    cereus kill ${identifier}\n`);
       break;
     }
 
@@ -135,7 +135,7 @@ export async function newCommand(
         });
       } else {
         console.log(chalk.green("✔"), `Session '${identifier}' started`);
-        console.log(`\n  attach:  agentmux attach ${identifier}\n`);
+        console.log(`\n  attach:  cereus attach ${identifier}\n`);
       }
       break;
     }
@@ -160,7 +160,7 @@ export async function newCommand(
   writeContextFile(worktreePath, session);
 }
 
-function resolveMode(options: NewOptions, config: AgentmuxConfig): Mode {
+function resolveMode(options: NewOptions, config: CereusConfig): Mode {
   if (options.smart) return "smart";
   if (options.split) return "split";
   if (options.hidden) return "hidden";
@@ -170,7 +170,7 @@ function resolveMode(options: NewOptions, config: AgentmuxConfig): Mode {
 
 function buildAgentCommand(
   agent: string,
-  config: AgentmuxConfig,
+  config: CereusConfig,
   prompt?: string,
 ): string {
   const parts = [agent, ...config.agentArgs];
@@ -182,7 +182,7 @@ function buildAgentCommand(
 
 async function resolveOrCreateRepo(
   name: string,
-  config: AgentmuxConfig,
+  config: CereusConfig,
 ): Promise<string | null> {
   const match = resolveRepo(name, config);
   if (match) {

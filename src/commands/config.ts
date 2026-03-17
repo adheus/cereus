@@ -3,12 +3,12 @@ import { input, select } from "@inquirer/prompts";
 import {
   loadConfig,
   saveConfig,
-  AgentmuxConfig,
+  CereusConfig,
 } from "../lib/config.js";
 
 export function configShow(): void {
   const config = loadConfig();
-  console.log(chalk.bold("Agentmux Configuration:\n"));
+  console.log(chalk.bold("Cereus Configuration:\n"));
   console.log(`  workspace:          ${chalk.cyan(config.workspace)}`);
   console.log(`  agent:              ${chalk.cyan(config.agent)}`);
   console.log(`  agentArgs:          ${chalk.cyan(JSON.stringify(config.agentArgs))}`);
@@ -34,7 +34,7 @@ export async function configSet(key: string, value: string): Promise<void> {
         console.error(chalk.red("defaultMode must be: smart, window, split, or hidden"));
         process.exit(1);
       }
-      config.defaultMode = value as AgentmuxConfig["defaultMode"];
+      config.defaultMode = value as CereusConfig["defaultMode"];
       break;
     case "maxPanesPerWindow": {
       const n = parseInt(value, 10);
@@ -92,11 +92,11 @@ export async function runSetup(): Promise<void> {
     default: String(existing.maxPanesPerWindow),
   });
 
-  const config: AgentmuxConfig = {
+  const config: CereusConfig = {
     ...existing,
     workspace,
     agent,
-    defaultMode: defaultMode as AgentmuxConfig["defaultMode"],
+    defaultMode: defaultMode as CereusConfig["defaultMode"],
     maxPanesPerWindow: parseInt(maxPanesStr, 10) || 4,
   };
 

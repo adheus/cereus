@@ -1,25 +1,43 @@
 {
-  "name": "agentmux",
+  "name": "cereus",
   "version": "0.1.0",
   "description": "Parallel AI coding sessions with git worktrees + tmux + agents",
   "type": "module",
   "bin": {
-    "agentmux": "./dist/index.js"
+    "cereus": "./dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "tsx src/index.ts",
-    "dev:dash": "bun src/index.ts dashboard",
     "build": "tsup",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "ai",
     "agent",
     "tmux",
     "worktree",
-    "cursor"
+    "git",
+    "parallel",
+    "coding",
+    "cli"
   ],
+  "author": "adheus",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adheus/cereus.git"
+  },
+  "homepage": "https://github.com/adheus/cereus#readme",
+  "bugs": {
+    "url": "https://github.com/adheus/cereus/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@inquirer/prompts": "^8.3.2",
     "@opentui/core": "^0.1.87",
