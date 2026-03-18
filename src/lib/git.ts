@@ -27,17 +27,31 @@ export function getCurrentBranch(dir: string): string {
   return git(["rev-parse", "--abbrev-ref", "HEAD"], dir);
 }
 
+export function branchExists(repoDir: string, branch: string): boolean {
+  try {
+    git(["rev-parse", "--verify", branch], repoDir);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function createWorktree(
   repoDir: string,
   worktreePath: string,
   branch: string,
   startPoint?: string,
 ): void {
-  const args = ["worktree", "add", "-b", branch, worktreePath];
-  if (startPoint) {
-    args.push(startPoint);
+  if (branchExists(repoDir, branch)) {
+    // Branch already exists — check it out in the new worktree without -b
+    git(["worktree", "add", worktreePath, branch], repoDir);
+  } else {
+    const args = ["worktree", "add", "-b", branch, worktreePath];
+    if (startPoint) {
+      args.push(startPoint);
+    }
+    git(args, repoDir);
   }
-  git(args, repoDir);
 }
 
 
