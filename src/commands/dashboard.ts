@@ -13,6 +13,7 @@ import {
   killPane,
   killSession,
   sendKeys,
+  capturePaneOutput,
 } from "../lib/tmux.js";
 import {
   loadConfig,
@@ -178,6 +179,18 @@ export async function dashboardCommand(): Promise<void> {
   let newSessionRepo: string | null = null;
   let newSessionInput = "";
 
+  // Activity detection state
+  const POLL_INTERVAL_MS = 3000;
+  const IDLE_THRESHOLD_MS = 10000;
+  const activityMap = new Map<string, { lastLine: string; lastChangeTime: number }>();
+
+  function getActivityStatus(session: Session): "active" | "idle" | "stopped" {
+    if (session.status !== "running") return "stopped";
+    const entry = activityMap.get(session.id);
+    if (!entry) return "active";
+    return Date.now() - entry.lastChangeTime >= IDLE_THRESHOLD_MS ? "idle" : "active";
+  }
+
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
     useMouse: false,
@@ -208,6 +221,7 @@ export async function dashboardCommand(): Promise<void> {
         "set-option", "-w", "-t", dashboardPaneId, "automatic-rename", "on",
       ]);
     } catch { /* ignore */ }
+    clearInterval(pollInterval);
     renderer.destroy();
   }
 
@@ -390,13 +404,16 @@ export async function dashboardCommand(): Promise<void> {
           } else {
             const session = row.session;
             const isExpanded = expandedSessions.has(session.id);
+            const activity = getActivityStatus(session);
             const statusColor =
-              session.status === "running" ? "#00ff00" : "#ff4444";
+              activity === "idle" ? "#e0e040" : session.status === "running" ? "#00ff00" : "#ff4444";
+            const statusIcon = activity === "idle" ? "◆" : "●";
+            const label = activity === "idle" ? `${session.id} Zz` : session.id;
             const arrow = isExpanded ? "▾" : "▸";
 
             children.push(
               Text({
-                content: `  ${isSelected ? arrow : " "} ● ${session.id}`,
+                content: `  ${isSelected ? arrow : " "} ${statusIcon} ${label}`,
                 fg: isSelected ? "#ffffff" : statusColor,
                 bg: isSelected ? "#333366" : undefined,
               }),
@@ -404,9 +421,10 @@ export async function dashboardCommand(): Promise<void> {
 
             if (isExpanded) {
               const dim = "#888888";
+              const statusLabel = activity === "idle" ? "idle" : session.status;
               children.push(
                 Text({
-                  content: `       Status:    ${session.status}`,
+                  content: `       Status:    ${statusLabel}`,
                   fg: statusColor,
                 }),
               );
@@ -483,6 +501,52 @@ export async function dashboardCommand(): Promise<void> {
   }
 
   render();
+
+  // Activity polling
+  function pollActivity() {
+    const allSessions = loadSessions();
+    let needsRender = false;
+
+    // Clean up entries for removed sessions
+    const activeIds = new Set(allSessions.map((s) => s.id));
+    for (const id of activityMap.keys()) {
+      if (!activeIds.has(id)) {
+        activityMap.delete(id);
+      }
+    }
+
+    for (const session of allSessions) {
+      if (session.status !== "running") continue;
+
+      const paneId = resolveSessionPaneId(session);
+      if (!paneId) continue;
+
+      const output = capturePaneOutput(paneId, 1).trimEnd();
+      const lastLine = output.split("\n").pop() ?? "";
+      const now = Date.now();
+      const prev = activityMap.get(session.id);
+
+      if (!prev) {
+        activityMap.set(session.id, { lastLine, lastChangeTime: now });
+        continue;
+      }
+
+      const wasIdle = now - prev.lastChangeTime >= IDLE_THRESHOLD_MS;
+
+      if (lastLine !== prev.lastLine) {
+        prev.lastLine = lastLine;
+        prev.lastChangeTime = now;
+        if (wasIdle) needsRender = true;
+      } else {
+        const isNowIdle = now - prev.lastChangeTime >= IDLE_THRESHOLD_MS;
+        if (isNowIdle && !wasIdle) needsRender = true;
+      }
+    }
+
+    if (needsRender) render();
+  }
+
+  const pollInterval = setInterval(pollActivity, POLL_INTERVAL_MS);
 
   // Keyboard handling
   renderer.keyInput.on("keypress", (key: KeyEvent) => {
