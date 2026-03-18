@@ -152,14 +152,6 @@ export async function dashboardCommand(): Promise<void> {
     process.exit(1);
   }
 
-  const isBun = typeof (globalThis as any).Bun !== "undefined";
-  if (!isBun) {
-    console.error(
-      "Dashboard requires Bun runtime. Run with: bun src/index.ts dashboard",
-    );
-    process.exit(1);
-  }
-
   const { createCliRenderer, Box, Text } = await import("@opentui/core");
   type KeyEvent = import("@opentui/core").KeyEvent;
 
