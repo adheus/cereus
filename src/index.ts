@@ -27,6 +27,7 @@ program
   .option("--hidden", "Run session in background")
   .option("--agent <command>", "Override agent CLI command")
   .option("--prompt <text>", "Initial prompt for the agent")
+  .option("--from <branch>", "Base branch for the worktree (default: HEAD)")
   .action(newCommand);
 
 program
@@ -48,8 +49,8 @@ program
   .description("Kill a session")
   .argument("[identifier]", "Session identifier")
   .option("--all", "Kill all sessions")
-  .option("--clean", "Also remove the git worktree")
-  .option("-f, --force", "Skip confirmation prompt")
+  .option("--clean", "Remove the git worktree without prompting")
+  .option("-f, --force", "Skip all confirmation prompts")
   .action(killCommand);
 
 program

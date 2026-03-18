@@ -7,6 +7,7 @@ export interface CereusConfig {
   agent: string;
   agentArgs: string[];
   defaultMode: "smart" | "window" | "split" | "hidden";
+  defaultBaseBranch: string;
   maxPanesPerWindow: number;
   aliases: Record<string, string>;
 }
@@ -19,6 +20,7 @@ const DEFAULT_CONFIG: CereusConfig = {
   agent: "cursor-agent",
   agentArgs: [],
   defaultMode: "smart",
+  defaultBaseBranch: "HEAD",
   maxPanesPerWindow: 4,
   aliases: {},
 };

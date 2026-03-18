@@ -31,16 +31,15 @@ Each session gets a git worktree (isolated branch + working copy), a tmux pane, 
 ## Install
 
 ```bash
-npm install -g cereus
+bun install -g cereus
 ```
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) >= 20
+- [Bun](https://bun.sh/)
 - [tmux](https://github.com/tmux/tmux)
 - [git](https://git-scm.com/)
 - An agent CLI (e.g. [cursor-agent](https://docs.cursor.com/agent), [claude](https://claude.ai), or any command)
-- [Bun](https://bun.sh/) (optional — required only for the `dashboard` command)
 
 ## Quick Start
 
@@ -81,6 +80,7 @@ Options:
   --hidden           Run session in background
   --agent <command>  Override agent CLI command
   --prompt <text>    Initial prompt for the agent
+  --from <branch>    Base branch for the worktree (default: HEAD)
 ```
 
 **Repo resolution**: cereus looks for the repo in your configured workspace. It checks aliases first, then scans directories up to 3 levels deep. If not found, it prompts you to clone or create one.
@@ -105,13 +105,13 @@ Options:
 
 ### `cereus kill [identifier]`
 
-Kill a session and optionally clean up its worktree.
+Kill a session. You'll be prompted whether to also remove the worktree.
 
 ```
 Options:
   --all     Kill all sessions
-  --clean   Also remove the git worktree
-  -f        Skip confirmation prompt
+  --clean   Remove the git worktree without prompting
+  -f        Skip all confirmation prompts (keeps worktree)
 ```
 
 ### `cereus alias`
@@ -170,6 +170,7 @@ Stored at `~/.cereus/config.json`:
   "agent": "cursor-agent",
   "agentArgs": [],
   "defaultMode": "smart",
+  "defaultBaseBranch": "HEAD",
   "maxPanesPerWindow": 4,
   "aliases": {
     "myapp": "somecompany/myapp"
@@ -183,6 +184,7 @@ Stored at `~/.cereus/config.json`:
 | `agent` | Default agent CLI command | `cursor-agent` |
 | `agentArgs` | Default arguments passed to the agent | `[]` |
 | `defaultMode` | Session display mode (`smart`, `window`, `split`, `hidden`) | `smart` |
+| `defaultBaseBranch` | Base branch for new worktrees | `HEAD` |
 | `maxPanesPerWindow` | Max panes before creating a new window (smart mode) | `4` |
 | `aliases` | Repo name shortcuts | `{}` |
 

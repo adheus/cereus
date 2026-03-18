@@ -37,6 +37,7 @@ interface NewOptions {
   hidden?: boolean;
   agent?: string;
   prompt?: string;
+  from?: string;
 }
 
 export async function newCommand(
@@ -72,12 +73,12 @@ export async function newCommand(
   const worktreePath = path.join(worktreeBase, identifier);
 
   if (fs.existsSync(worktreePath)) {
-    console.error(chalk.red(`Worktree path already exists: ${worktreePath}`));
-    process.exit(1);
+    console.log(chalk.blue("▸"), `Reusing existing worktree '${identifier}'...`);
+  } else {
+    const startPoint = options.from ?? config.defaultBaseBranch;
+    console.log(chalk.blue("▸"), `Creating worktree '${identifier}' from ${startPoint}...`);
+    createWorktree(repoPath, worktreePath, identifier, startPoint);
   }
-
-  console.log(chalk.blue("▸"), `Creating worktree '${identifier}'...`);
-  createWorktree(repoPath, worktreePath, identifier);
 
   const agentCmd = buildAgentCommand(agent, config, options.prompt);
   let tmuxPane: string | undefined;

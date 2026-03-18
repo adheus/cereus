@@ -47,7 +47,15 @@ export async function killCommand(
     console.log(chalk.green("✔"), `Tmux session '${identifier}' killed.`);
   }
 
-  if (options.clean) {
+  let shouldClean = options.clean;
+  if (!shouldClean && !options.force) {
+    shouldClean = await confirm({
+      message: `Also remove the worktree at ${session.worktreePath}?`,
+      default: false,
+    });
+  }
+
+  if (shouldClean) {
     removeContextFile(session.worktreePath);
     removeWorktree(session.repoPath, session.worktreePath);
     console.log(chalk.green("✔"), "Worktree removed.");
@@ -72,13 +80,21 @@ async function killAll(options: KillOptions): Promise<void> {
     if (!yes) return;
   }
 
+  let shouldClean = options.clean;
+  if (!shouldClean && !options.force) {
+    shouldClean = await confirm({
+      message: "Also remove all worktrees?",
+      default: false,
+    });
+  }
+
   for (const session of sessions) {
     if (session.tmuxPane) {
       killPane(session.tmuxPane);
     } else {
       killSession(session.tmuxSession);
     }
-    if (options.clean) {
+    if (shouldClean) {
       removeContextFile(session.worktreePath);
       removeWorktree(session.repoPath, session.worktreePath);
     }

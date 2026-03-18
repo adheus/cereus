@@ -8,9 +8,9 @@ cereus is a CLI tool for managing parallel AI coding sessions using git worktree
 
 ## Build & Development Commands
 
-- `npm run dev` — Run directly with tsx (no build step needed)
-- `npm run build` — Bundle with tsup → `dist/index.js` (ESM, Node 20+, includes shebang)
-- `npm run lint` — Type-check with `tsc --noEmit`
+- `bun run dev` — Run directly with tsx (no build step needed)
+- `bun run build` — Bundle with tsup → `dist/index.js` (ESM, includes shebang)
+- `bun run lint` — Type-check with `tsc --noEmit`
 
 No test framework is configured yet.
 

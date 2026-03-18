@@ -20,8 +20,8 @@ import {
   resolveWorkspacePath,
 } from "../lib/config.js";
 import { resolveRepo } from "../lib/repo.js";
-import { createWorktree, isGitRepo } from "../lib/git.js";
-import { writeContextFile } from "../lib/context.js";
+import { createWorktree, isGitRepo, removeWorktree } from "../lib/git.js";
+import { writeContextFile, removeContextFile } from "../lib/context.js";
 import { execFileSync } from "node:child_process";
 
 const VERSION = "0.1.0";
@@ -175,6 +175,9 @@ export async function dashboardCommand(): Promise<void> {
   // Navigation list (rebuilt on each render)
   let groups: RepoGroup[] = [];
   let navRows: NavRow[] = [];
+
+  // Kill confirmation state
+  let killConfirmSessionId: string | null = null;
 
   // New session creation state
   let newSessionStep: "repo" | "identifier" | null = null;
@@ -454,13 +457,20 @@ export async function dashboardCommand(): Promise<void> {
 
       children.push(Text({ content: "" }));
       children.push(Box({ flexGrow: 1 }));
-      children.push(Text({ content: " j/k navigate", fg: "#555555" }));
-      children.push(Text({ content: " l/h expand/collapse", fg: "#555555" }));
-      children.push(Text({ content: " Enter attach", fg: "#555555" }));
-      children.push(Text({ content: " n new session", fg: "#555555" }));
-      children.push(Text({ content: " x kill session", fg: "#555555" }));
-      children.push(Text({ content: " r refresh", fg: "#555555" }));
-      children.push(Text({ content: " q quit", fg: "#555555" }));
+      if (killConfirmSessionId) {
+        children.push(Text({ content: ` Kill '${killConfirmSessionId}'?`, fg: "#ff8800" }));
+        children.push(Text({ content: " x confirm (keep worktree)", fg: "#ffaa00" }));
+        children.push(Text({ content: " X confirm (remove worktree)", fg: "#ff5555" }));
+        children.push(Text({ content: " Esc cancel", fg: "#555555" }));
+      } else {
+        children.push(Text({ content: " j/k navigate", fg: "#555555" }));
+        children.push(Text({ content: " l/h expand/collapse", fg: "#555555" }));
+        children.push(Text({ content: " Enter attach", fg: "#555555" }));
+        children.push(Text({ content: " n new session", fg: "#555555" }));
+        children.push(Text({ content: " x kill session", fg: "#555555" }));
+        children.push(Text({ content: " r refresh", fg: "#555555" }));
+        children.push(Text({ content: " q quit", fg: "#555555" }));
+      }
     }
 
     renderer.root.add(
@@ -557,13 +567,9 @@ export async function dashboardCommand(): Promise<void> {
           fs.mkdirSync(worktreeBase, { recursive: true });
           const worktreePath = path.join(worktreeBase, identifier);
 
-          if (fs.existsSync(worktreePath)) {
-            newSessionStep = null;
-            render();
-            return;
+          if (!fs.existsSync(worktreePath)) {
+            createWorktree(repoPath, worktreePath, identifier);
           }
-
-          createWorktree(repoPath, worktreePath, identifier);
 
           const agent = config.agent;
           const tmuxName = `cr_${identifier}`;
@@ -637,6 +643,53 @@ export async function dashboardCommand(): Promise<void> {
       return;
     }
 
+    // --- Kill confirmation mode ---
+    if (killConfirmSessionId) {
+      if (key.name === "escape") {
+        killConfirmSessionId = null;
+        render();
+        return;
+      }
+
+      // x = kill (keep worktree), X = kill + remove worktree
+      const isShiftX = key.sequence === "X";
+      if (key.name === "x" || isShiftX) {
+        const session = loadSessions().find((s) => s.id === killConfirmSessionId);
+        if (session) {
+          if (swappedSessionId === session.id) {
+            if (previewPaneId && paneExists(previewPaneId)) {
+              killPane(previewPaneId);
+            }
+            previewPaneId = null;
+            displacedPaneId = null;
+            swappedSessionId = null;
+          }
+
+          if (session.tmuxPane) {
+            killPane(session.tmuxPane);
+          } else {
+            killSession(session.tmuxSession);
+          }
+
+          if (isShiftX) {
+            removeContextFile(session.worktreePath);
+            removeWorktree(session.repoPath, session.worktreePath);
+          }
+
+          expandedSessions.delete(session.id);
+          removeSession(session.id);
+        }
+        killConfirmSessionId = null;
+        render();
+        return;
+      }
+
+      // Any other key cancels
+      killConfirmSessionId = null;
+      render();
+      return;
+    }
+
     // --- Navigation mode ---
     if (key.name === "q" || (key.ctrl && key.name === "c")) {
       cleanup();
@@ -698,27 +751,7 @@ export async function dashboardCommand(): Promise<void> {
     if (key.name === "x") {
       const row = navRows[selectedIndex];
       if (!row || row.type !== "session") return;
-      const session = row.session;
-
-      if (swappedSessionId === session.id) {
-        // Kill the preview pane (which has the session's content after swap)
-        if (previewPaneId && paneExists(previewPaneId)) {
-          killPane(previewPaneId);
-        }
-        // The displaced pane will be cleaned up when we kill the session below
-        previewPaneId = null;
-        displacedPaneId = null;
-        swappedSessionId = null;
-      }
-
-      if (session.tmuxPane) {
-        killPane(session.tmuxPane);
-      } else {
-        killSession(session.tmuxSession);
-      }
-
-      expandedSessions.delete(session.id);
-      removeSession(session.id);
+      killConfirmSessionId = row.session.id;
       render();
       return;
     }

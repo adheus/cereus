@@ -39,4 +39,4 @@
 - [ ] Session snapshots / restore
 - [ ] Cost tracking per session (token usage)
 - [ ] Web dashboard alternative
-- [ ] npm publish for global install
+- [ ] Publish for global install (bun/npm)

@@ -31,9 +31,15 @@ export function createWorktree(
   repoDir: string,
   worktreePath: string,
   branch: string,
+  startPoint?: string,
 ): void {
-  git(["worktree", "add", "-b", branch, worktreePath], repoDir);
+  const args = ["worktree", "add", "-b", branch, worktreePath];
+  if (startPoint) {
+    args.push(startPoint);
+  }
+  git(args, repoDir);
 }
+
 
 export function removeWorktree(repoDir: string, worktreePath: string): void {
   try {
