@@ -4,6 +4,7 @@ import { findSession, removeSession, loadSessions, saveSessions } from "../lib/s
 import { killSession, killPane } from "../lib/tmux.js";
 import { removeWorktree } from "../lib/git.js";
 import { removeContextFile } from "../lib/context.js";
+import { stopContainer } from "../lib/container.js";
 
 interface KillOptions {
   all?: boolean;
@@ -45,6 +46,12 @@ export async function killCommand(
   } else {
     killSession(session.tmuxSession);
     console.log(chalk.green("✔"), `Tmux session '${identifier}' killed.`);
+  }
+
+  if (session.container) {
+    console.log(chalk.blue("▸"), "Stopping devcontainer...");
+    stopContainer(session.worktreePath);
+    console.log(chalk.green("✔"), "Devcontainer stopped.");
   }
 
   let shouldClean = options.clean;
@@ -93,6 +100,9 @@ async function killAll(options: KillOptions): Promise<void> {
       killPane(session.tmuxPane);
     } else {
       killSession(session.tmuxSession);
+    }
+    if (session.container) {
+      stopContainer(session.worktreePath);
     }
     if (shouldClean) {
       removeContextFile(session.worktreePath);

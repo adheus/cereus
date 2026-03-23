@@ -13,6 +13,7 @@ export interface Session {
   agent: string;
   prompt?: string;
   mode: "smart" | "window" | "split" | "hidden";
+  container?: boolean;
   status: "running" | "stopped";
   createdAt: string;
 }

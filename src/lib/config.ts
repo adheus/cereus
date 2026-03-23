@@ -10,6 +10,7 @@ export interface CereusConfig {
   defaultBaseBranch: string;
   maxPanesPerWindow: number;
   aliases: Record<string, string>;
+  containerEnvVars: string[];
 }
 
 const CEREUS_DIR = path.join(os.homedir(), ".cereus");
@@ -23,6 +24,7 @@ const DEFAULT_CONFIG: CereusConfig = {
   defaultBaseBranch: "HEAD",
   maxPanesPerWindow: 4,
   aliases: {},
+  containerEnvVars: ["ANTHROPIC_API_KEY"],
 };
 
 export function getCereusDir(): string {
