@@ -23,6 +23,12 @@ import {
 import { resolveRepo } from "../lib/repo.js";
 import { createWorktree, isGitRepo, removeWorktree } from "../lib/git.js";
 import { writeContextFile, removeContextFile } from "../lib/context.js";
+import {
+  devcontainerAvailable,
+  hasDevcontainerConfig,
+  buildContainerAgentCommand,
+  stopContainer,
+} from "../lib/container.js";
 import { execFileSync } from "node:child_process";
 
 const VERSION = "0.1.0";
@@ -178,6 +184,7 @@ export async function dashboardCommand(): Promise<void> {
   let newSessionRepoIndex = 0;
   let newSessionRepo: string | null = null;
   let newSessionInput = "";
+  let newSessionContainer = false;
 
   // Activity detection state
   const POLL_INTERVAL_MS = 3000;
@@ -347,7 +354,8 @@ export async function dashboardCommand(): Promise<void> {
 
     if (newSessionStep) {
       // --- New session creation UI ---
-      children.push(Text({ content: " NEW SESSION", fg: "#00ff00" }));
+      const sessionTypeLabel = newSessionContainer ? " NEW CONTAINER SESSION" : " NEW SESSION";
+      children.push(Text({ content: sessionTypeLabel, fg: "#00ff00" }));
       children.push(Text({ content: "" }));
 
       if (newSessionStep === "repo") {
@@ -446,6 +454,14 @@ export async function dashboardCommand(): Promise<void> {
                   fg: dim,
                 }),
               );
+              if (session.container) {
+                children.push(
+                  Text({
+                    content: `       Container: yes`,
+                    fg: "#00aaff",
+                  }),
+                );
+              }
               children.push(
                 Text({
                   content: `       Worktree:  ${session.worktreePath}`,
@@ -477,6 +493,7 @@ export async function dashboardCommand(): Promise<void> {
         children.push(Text({ content: " l/h expand/collapse", fg: "#555555" }));
         children.push(Text({ content: " Enter attach", fg: "#555555" }));
         children.push(Text({ content: " n new session", fg: "#555555" }));
+        children.push(Text({ content: " c new container session", fg: "#555555" }));
         children.push(Text({ content: " x kill session", fg: "#555555" }));
         children.push(Text({ content: " r refresh", fg: "#555555" }));
         children.push(Text({ content: " q quit", fg: "#555555" }));
@@ -556,6 +573,7 @@ export async function dashboardCommand(): Promise<void> {
         newSessionStep = null;
         newSessionInput = "";
         newSessionRepo = null;
+        newSessionContainer = false;
         render();
         return;
       }
@@ -627,6 +645,22 @@ export async function dashboardCommand(): Promise<void> {
             createWorktree(repoPath, worktreePath, identifier);
           }
 
+          // Validate container requirements
+          if (newSessionContainer) {
+            if (!devcontainerAvailable()) {
+              newSessionStep = null;
+              newSessionContainer = false;
+              render();
+              return;
+            }
+            if (!hasDevcontainerConfig(worktreePath) && !hasDevcontainerConfig(repoPath)) {
+              newSessionStep = null;
+              newSessionContainer = false;
+              render();
+              return;
+            }
+          }
+
           const agent = config.agent;
           const tmuxName = `cr_${identifier}`;
 
@@ -638,7 +672,10 @@ export async function dashboardCommand(): Promise<void> {
             );
           } catch { /* ignore */ }
 
-          const agentCmd = [agent, ...config.agentArgs].join(" ");
+          const rawAgentCmd = [agent, ...config.agentArgs].join(" ");
+          const agentCmd = newSessionContainer
+            ? buildContainerAgentCommand(worktreePath, rawAgentCmd, config)
+            : rawAgentCmd;
           sendKeys(tmuxName, agentCmd);
 
           const session: Session = {
@@ -651,6 +688,7 @@ export async function dashboardCommand(): Promise<void> {
             tmuxPane: undefined,
             agent,
             prompt: undefined,
+            container: newSessionContainer || undefined,
             mode: "hidden",
             status: "running",
             createdAt: new Date().toISOString(),
@@ -662,6 +700,7 @@ export async function dashboardCommand(): Promise<void> {
           newSessionStep = null;
           newSessionInput = "";
           newSessionRepo = null;
+          newSessionContainer = false;
 
           // Re-render and select the new session
           groups = refreshSessions();
@@ -725,6 +764,10 @@ export async function dashboardCommand(): Promise<void> {
             killPane(session.tmuxPane);
           } else {
             killSession(session.tmuxSession);
+          }
+
+          if (session.container) {
+            stopContainer(session.worktreePath);
           }
 
           if (isShiftX) {
@@ -812,7 +855,7 @@ export async function dashboardCommand(): Promise<void> {
       return;
     }
 
-    if (key.name === "n") {
+    if (key.name === "n" || key.name === "c") {
       if (!configExists()) return;
       const config = loadConfig();
       const workspace = resolveWorkspacePath(config);
@@ -862,6 +905,7 @@ export async function dashboardCommand(): Promise<void> {
       newSessionStep = "repo";
       newSessionInput = "";
       newSessionRepo = null;
+      newSessionContainer = key.name === "c";
       render();
       return;
     }

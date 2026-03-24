@@ -26,6 +26,11 @@ import {
   splitPane,
 } from "../lib/tmux.js";
 import { writeContextFile } from "../lib/context.js";
+import {
+  devcontainerAvailable,
+  hasDevcontainerConfig,
+  buildContainerAgentCommand,
+} from "../lib/container.js";
 import { runSetup } from "./config.js";
 
 type Mode = "smart" | "window" | "split" | "hidden";
@@ -38,6 +43,7 @@ interface NewOptions {
   agent?: string;
   prompt?: string;
   from?: string;
+  container?: boolean;
 }
 
 export async function newCommand(
@@ -63,6 +69,17 @@ export async function newCommand(
     process.exit(1);
   }
 
+  const useContainer = options.container ?? false;
+
+  if (useContainer) {
+    if (!devcontainerAvailable()) {
+      console.error(
+        chalk.red("devcontainer CLI not found. Install it with: npm install -g @devcontainers/cli"),
+      );
+      process.exit(1);
+    }
+  }
+
   const repoPath = await resolveOrCreateRepo(repo, config);
   if (!repoPath) {
     process.exit(1);
@@ -80,7 +97,17 @@ export async function newCommand(
     createWorktree(repoPath, worktreePath, identifier, startPoint);
   }
 
-  const agentCmd = buildAgentCommand(agent, config, options.prompt);
+  if (useContainer && !hasDevcontainerConfig(worktreePath) && !hasDevcontainerConfig(repoPath)) {
+    console.error(
+      chalk.red(`No devcontainer.json found in '${repo}'. Add a .devcontainer/devcontainer.json to use container mode.`),
+    );
+    process.exit(1);
+  }
+
+  const rawAgentCmd = buildAgentCommand(agent, config, options.prompt);
+  const agentCmd = useContainer
+    ? buildContainerAgentCommand(worktreePath, rawAgentCmd, config)
+    : rawAgentCmd;
   let tmuxPane: string | undefined;
 
   switch (mode) {
@@ -152,6 +179,7 @@ export async function newCommand(
     tmuxPane,
     agent,
     prompt: options.prompt,
+    container: useContainer || undefined,
     mode,
     status: "running" as const,
     createdAt: new Date().toISOString(),

@@ -28,6 +28,7 @@ program
   .option("--agent <command>", "Override agent CLI command")
   .option("--prompt <text>", "Initial prompt for the agent")
   .option("--from <branch>", "Base branch for the worktree (default: HEAD)")
+  .option("--container", "Run agent inside a devcontainer")
   .action(newCommand);
 
 program
