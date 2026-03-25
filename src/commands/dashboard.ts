@@ -18,6 +18,7 @@ import {
   capturePaneOutput,
   setSessionPaneBorderStatus,
   setPaneTitle,
+  smartSplitAt,
 } from "../lib/tmux.js";
 import {
   loadConfig,
@@ -1107,22 +1108,13 @@ export async function dashboardCommand(): Promise<void> {
       if (!targetPaneId) return;
 
       const type: SubPane["type"] = key.name === "e" ? "editor" : "terminal";
-      const direction = type === "editor" ? "v" : "h";
       try {
-        const output = execFileSync(
-          "tmux",
-          [
-            "split-window", `-${direction}`, "-t", targetPaneId,
-            "-c", session.worktreePath,
-            "-P", "-F", "#{pane_id}",
-          ],
-          { encoding: "utf-8" },
-        ).trim();
-        setPaneTitle(output, `${session.id} [${type}]`);
+        const newPaneId = smartSplitAt(targetPaneId, session.worktreePath);
+        setPaneTitle(newPaneId, `${session.id} [${type}]`);
         if (type === "editor") {
-          sendKeys(output, "nvim .");
+          sendKeys(newPaneId, "nvim .");
         }
-        addSubPane(session.id, { paneId: output, type });
+        addSubPane(session.id, { paneId: newPaneId, type });
       } catch { /* ignore */ }
       render();
       return;

@@ -170,6 +170,65 @@ export function smartSplit(
   return { paneId, createdWindow: false };
 }
 
+/**
+ * Get pane IDs for the window containing a specific pane.
+ */
+export function getWindowPaneIds(targetPane: string): string[] {
+  try {
+    // Find which window this pane belongs to, then list all panes in that window
+    const windowId = execFileSync(
+      "tmux",
+      ["display-message", "-t", targetPane, "-p", "#{window_id}"],
+      { encoding: "utf-8" },
+    ).trim();
+    const output = execFileSync(
+      "tmux",
+      ["list-panes", "-t", windowId, "-F", "#{pane_id}"],
+      { encoding: "utf-8" },
+    ).trim();
+    return output.split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Smart split targeting a specific pane's window.
+ * Uses the same layout logic as smartSplit but operates on the window
+ * containing the given pane rather than the current window.
+ */
+export function smartSplitAt(
+  targetPane: string,
+  cwd: string,
+): string {
+  const panes = getWindowPaneIds(targetPane);
+  const paneCount = panes.length;
+
+  let direction: "h" | "v";
+  let splitTarget: string;
+
+  switch (paneCount) {
+    case 1:
+      direction = "h";
+      splitTarget = panes[0];
+      break;
+    case 2:
+      direction = "v";
+      splitTarget = panes[1];
+      break;
+    case 3:
+      direction = "v";
+      splitTarget = panes[0];
+      break;
+    default:
+      direction = "h";
+      splitTarget = panes[panes.length - 1];
+      break;
+  }
+
+  return splitPaneAt(splitTarget, cwd, direction);
+}
+
 export function capturePaneOutput(target: string, lines = 500): string {
   try {
     return execFileSync(

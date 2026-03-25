@@ -7,12 +7,12 @@ import {
   type SubPane,
 } from "../lib/sessions.js";
 import {
-  splitPaneAt,
   sendKeys,
   killPane,
   paneExists,
   setPaneTitle,
   sessionExists,
+  smartSplitAt,
 } from "../lib/tmux.js";
 import { execFileSync } from "node:child_process";
 
@@ -38,7 +38,6 @@ function resolveSessionPaneId(session: ReturnType<typeof findSession>): string |
 
 interface PaneAddOptions {
   type?: string;
-  direction?: string;
 }
 
 export async function paneAddCommand(
@@ -68,8 +67,7 @@ export async function paneAddCommand(
     process.exit(1);
   }
 
-  const direction = (options.direction || (type === "editor" ? "v" : "h")) as "h" | "v";
-  const newPaneId = splitPaneAt(targetPaneId, session.worktreePath, direction);
+  const newPaneId = smartSplitAt(targetPaneId, session.worktreePath);
   const title = `${session.id} [${type}]`;
   setPaneTitle(newPaneId, title);
 

@@ -82,7 +82,6 @@ pane
   .description("Add a sub-pane (editor or terminal) to a session")
   .argument("<session>", "Session identifier")
   .option("--type <type>", "Pane type: editor, terminal", "terminal")
-  .option("--direction <dir>", "Split direction: h or v")
   .action(paneAddCommand);
 
 pane
