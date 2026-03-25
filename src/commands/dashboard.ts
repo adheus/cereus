@@ -231,15 +231,6 @@ export async function dashboardCommand(): Promise<void> {
   let workspaceAttachChoices: { label: string; session: Session }[] = [];
   let workspaceAttachIndex = 0;
 
-  // Sub-pane creation state
-  let subPaneStep: "type" | null = null;
-  let subPaneSessionId: string | null = null;
-  let subPaneTypeIndex = 0;
-  const subPaneTypes: { label: string; value: SubPane["type"] }[] = [
-    { label: "Terminal", value: "terminal" },
-    { label: "Editor (nvim)", value: "editor" },
-  ];
-
   // Activity detection state
   const POLL_INTERVAL_MS = 3000;
   const IDLE_THRESHOLD_MS = 10000;
@@ -408,27 +399,7 @@ export async function dashboardCommand(): Promise<void> {
       Text({ content: "" }),
     ];
 
-    if (subPaneStep) {
-      // --- Sub-pane creation UI ---
-      children.push(Text({ content: ` ADD PANE TO '${subPaneSessionId}'`, fg: "#00ff00" }));
-      children.push(Text({ content: "" }));
-      children.push(Text({ content: " Select type:", fg: "#cccccc" }));
-      children.push(Text({ content: "" }));
-      for (let i = 0; i < subPaneTypes.length; i++) {
-        const isSel = i === subPaneTypeIndex;
-        children.push(
-          Text({
-            content: `${isSel ? " ▸" : "  "} ${subPaneTypes[i].label}`,
-            fg: isSel ? "#ffffff" : "#888888",
-            bg: isSel ? "#333366" : undefined,
-          }),
-        );
-      }
-      children.push(Box({ flexGrow: 1 }));
-      children.push(Text({ content: " j/k navigate", fg: "#555555" }));
-      children.push(Text({ content: " Enter confirm", fg: "#555555" }));
-      children.push(Text({ content: " Esc cancel", fg: "#555555" }));
-    } else if (workspaceStep) {
+    if (workspaceStep) {
       // --- Workspace creation / attach UI ---
       if (workspaceStep === "name") {
         children.push(Text({ content: " NEW WORKSPACE", fg: "#00ff00" }));
@@ -653,8 +624,9 @@ export async function dashboardCommand(): Promise<void> {
         children.push(Text({ content: " Enter attach", fg: "#555555" }));
         children.push(Text({ content: " n new session  o new workspace", fg: "#555555" }));
         children.push(Text({ content: " c container    a attach to workspace", fg: "#555555" }));
-        children.push(Text({ content: " p add pane     d detach from workspace", fg: "#555555" }));
-        children.push(Text({ content: " x kill/delete  r refresh  q quit", fg: "#555555" }));
+        children.push(Text({ content: " e editor       d detach from workspace", fg: "#555555" }));
+        children.push(Text({ content: " t terminal     x kill/delete", fg: "#555555" }));
+        children.push(Text({ content: " r refresh      q quit", fg: "#555555" }));
       }
     }
 
@@ -797,62 +769,6 @@ export async function dashboardCommand(): Promise<void> {
         return;
       }
 
-      return;
-    }
-
-    // --- Sub-pane creation flow ---
-    if (subPaneStep) {
-      if (key.name === "escape") {
-        subPaneStep = null;
-        subPaneSessionId = null;
-        render();
-        return;
-      }
-      if (key.name === "j" || key.name === "down") {
-        if (subPaneTypeIndex < subPaneTypes.length - 1) {
-          subPaneTypeIndex++;
-          render();
-        }
-        return;
-      }
-      if (key.name === "k" || key.name === "up") {
-        if (subPaneTypeIndex > 0) {
-          subPaneTypeIndex--;
-          render();
-        }
-        return;
-      }
-      if (key.name === "return" && subPaneSessionId) {
-        const session = loadSessions().find((s) => s.id === subPaneSessionId);
-        if (session && session.status === "running") {
-          const targetPaneId = resolveSessionPaneId(session);
-          if (targetPaneId) {
-            const type = subPaneTypes[subPaneTypeIndex].value;
-            const direction = type === "editor" ? "v" : "h";
-            try {
-              const output = execFileSync(
-                "tmux",
-                [
-                  "split-window", `-${direction}`, "-t", targetPaneId,
-                  "-c", session.worktreePath,
-                  "-P", "-F", "#{pane_id}",
-                ],
-                { encoding: "utf-8" },
-              ).trim();
-              const title = `${session.id} [${type}]`;
-              setPaneTitle(output, title);
-              if (type === "editor") {
-                sendKeys(output, "nvim .");
-              }
-              addSubPane(session.id, { paneId: output, type });
-            } catch { /* ignore */ }
-          }
-        }
-        subPaneStep = null;
-        subPaneSessionId = null;
-        render();
-        return;
-      }
       return;
     }
 
@@ -1179,13 +1095,35 @@ export async function dashboardCommand(): Promise<void> {
       return;
     }
 
-    if (key.name === "p") {
+    if (key.name === "e" || key.name === "t") {
       const row = navRows[selectedIndex];
-      if (!row || row.type !== "session") return;
-      if (row.session.status !== "running") return;
-      subPaneSessionId = row.session.id;
-      subPaneTypeIndex = 0;
-      subPaneStep = "type";
+      if (!row) return;
+      let session: Session | undefined;
+      if (row.type === "session") session = row.session;
+      else if (row.type === "workspace-member") session = row.session;
+      if (!session || session.status !== "running") return;
+
+      const targetPaneId = resolveSessionPaneId(session);
+      if (!targetPaneId) return;
+
+      const type: SubPane["type"] = key.name === "e" ? "editor" : "terminal";
+      const direction = type === "editor" ? "v" : "h";
+      try {
+        const output = execFileSync(
+          "tmux",
+          [
+            "split-window", `-${direction}`, "-t", targetPaneId,
+            "-c", session.worktreePath,
+            "-P", "-F", "#{pane_id}",
+          ],
+          { encoding: "utf-8" },
+        ).trim();
+        setPaneTitle(output, `${session.id} [${type}]`);
+        if (type === "editor") {
+          sendKeys(output, "nvim .");
+        }
+        addSubPane(session.id, { paneId: output, type });
+      } catch { /* ignore */ }
       render();
       return;
     }
@@ -1199,10 +1137,14 @@ export async function dashboardCommand(): Promise<void> {
     }
 
     if (key.name === "a") {
-      // Attach session to workspace (only when a workspace row is selected)
+      // Attach session to workspace (works on workspace or workspace-member rows)
       const row = navRows[selectedIndex];
-      if (!row || row.type !== "workspace") return;
-      const ov = findWorkspace(row.workspace.id);
+      if (!row) return;
+      let wsId: string | undefined;
+      if (row.type === "workspace") wsId = row.workspace.id;
+      else if (row.type === "workspace-member") wsId = row.workspace.id;
+      if (!wsId) return;
+      const ov = findWorkspace(wsId);
       if (!ov) return;
       if (ov.sessionIds.length >= ov.maxPanes) return;
 

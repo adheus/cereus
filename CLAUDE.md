@@ -61,9 +61,10 @@ No test framework is configured yet.
 - `Enter` — Attach to session (preview pane) or toggle expand
 - `n` — New session
 - `c` — New container session
-- `p` — Add sub-pane (editor/terminal) to selected session
+- `e` — Open editor (neovim) pane alongside selected session
+- `t` — Open terminal pane alongside selected session
 - `o` — Create new workspace
-- `a` — Attach session to selected workspace
+- `a` — Attach session to workspace (works on workspace row or any of its members)
 - `d` — Detach session from workspace
 - `x` — Kill session or delete workspace
 - `r` — Refresh
