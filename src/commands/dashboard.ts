@@ -34,15 +34,15 @@ import {
   stopContainer,
 } from "../lib/container.js";
 import {
-  loadOverviews,
-  addOverview,
-  findOverview,
-  attachSessionToOverview,
-  detachSessionFromOverview,
-  removeOverview,
-  updateOverview,
-  type Overview,
-} from "../lib/overviews.js";
+  loadWorkspaces,
+  addWorkspace,
+  findWorkspace,
+  attachSessionToWorkspace,
+  detachSessionFromWorkspace,
+  removeWorkspace,
+  updateWorkspace,
+  type Workspace,
+} from "../lib/workspaces.js";
 import { execFileSync } from "node:child_process";
 
 const VERSION = "0.2.0";
@@ -52,13 +52,13 @@ interface RepoGroup {
   sessions: Session[];
 }
 
-// A navigable row is a repo header, session, overview header, overview, or overview member
+// A navigable row is a repo header, session, workspace header, workspace, or workspace member
 type NavRow =
   | { type: "repo"; repo: string }
   | { type: "session"; session: Session }
-  | { type: "overview-header" }
-  | { type: "overview"; overview: Overview }
-  | { type: "overview-member"; overview: Overview; session: Session };
+  | { type: "workspace-header" }
+  | { type: "workspace"; workspace: Workspace }
+  | { type: "workspace-member"; workspace: Workspace; session: Session };
 
 function groupByRepo(sessions: Session[]): RepoGroup[] {
   const map = new Map<string, Session[]>();
@@ -88,7 +88,7 @@ function refreshSessions(): { groups: RepoGroup[]; allSessions: Session[] } {
 function buildNavRows(
   groups: RepoGroup[],
   collapsedRepos: Set<string>,
-  expandedOverviews: Set<string>,
+  expandedWorkspaces: Set<string>,
   allSessions: Session[],
 ): NavRow[] {
   const rows: NavRow[] = [];
@@ -101,16 +101,16 @@ function buildNavRows(
     }
   }
 
-  const overviews = loadOverviews();
-  if (overviews.length > 0) {
-    rows.push({ type: "overview-header" });
-    for (const ov of overviews) {
-      rows.push({ type: "overview", overview: ov });
-      if (expandedOverviews.has(ov.id)) {
+  const workspaces = loadWorkspaces();
+  if (workspaces.length > 0) {
+    rows.push({ type: "workspace-header" });
+    for (const ov of workspaces) {
+      rows.push({ type: "workspace", workspace: ov });
+      if (expandedWorkspaces.has(ov.id)) {
         for (const sid of ov.sessionIds) {
           const session = allSessions.find((s) => s.id === sid);
           if (session) {
-            rows.push({ type: "overview-member", overview: ov, session });
+            rows.push({ type: "workspace-member", workspace: ov, session });
           }
         }
       }
@@ -206,7 +206,7 @@ export async function dashboardCommand(): Promise<void> {
   let swappedSessionId: string | null = null;
   const expandedSessions = new Set<string>();
   const collapsedRepos = new Set<string>();
-  const expandedOverviews = new Set<string>();
+  const expandedWorkspaces = new Set<string>();
 
   // Navigation list (rebuilt on each render)
   let groups: RepoGroup[] = [];
@@ -224,12 +224,12 @@ export async function dashboardCommand(): Promise<void> {
   let newSessionInput = "";
   let newSessionContainer = false;
 
-  // Overview creation state
-  let overviewStep: "name" | "attach-pick" | null = null;
-  let overviewInput = "";
-  let overviewAttachTarget: Overview | null = null;
-  let overviewAttachChoices: { label: string; session: Session }[] = [];
-  let overviewAttachIndex = 0;
+  // Workspace creation state
+  let workspaceStep: "name" | "attach-pick" | null = null;
+  let workspaceInput = "";
+  let workspaceAttachTarget: Workspace | null = null;
+  let workspaceAttachChoices: { label: string; session: Session }[] = [];
+  let workspaceAttachIndex = 0;
 
   // Sub-pane creation state
   let subPaneStep: "type" | null = null;
@@ -391,7 +391,7 @@ export async function dashboardCommand(): Promise<void> {
     const refreshed = refreshSessions();
     groups = refreshed.groups;
     allSessions = refreshed.allSessions;
-    navRows = buildNavRows(groups, collapsedRepos, expandedOverviews, allSessions);
+    navRows = buildNavRows(groups, collapsedRepos, expandedWorkspaces, allSessions);
 
     if (selectedIndex >= navRows.length) selectedIndex = navRows.length - 1;
     if (selectedIndex < 0) selectedIndex = 0;
@@ -428,34 +428,34 @@ export async function dashboardCommand(): Promise<void> {
       children.push(Text({ content: " j/k navigate", fg: "#555555" }));
       children.push(Text({ content: " Enter confirm", fg: "#555555" }));
       children.push(Text({ content: " Esc cancel", fg: "#555555" }));
-    } else if (overviewStep) {
-      // --- Overview creation / attach UI ---
-      if (overviewStep === "name") {
-        children.push(Text({ content: " NEW OVERVIEW", fg: "#00ff00" }));
+    } else if (workspaceStep) {
+      // --- Workspace creation / attach UI ---
+      if (workspaceStep === "name") {
+        children.push(Text({ content: " NEW WORKSPACE", fg: "#00ff00" }));
         children.push(Text({ content: "" }));
-        children.push(Text({ content: " Overview name:", fg: "#cccccc" }));
+        children.push(Text({ content: " Workspace name:", fg: "#cccccc" }));
         children.push(
-          Text({ content: ` > ${overviewInput}_`, fg: "#ffffff" }),
+          Text({ content: ` > ${workspaceInput}_`, fg: "#ffffff" }),
         );
         children.push(Box({ flexGrow: 1 }));
         children.push(Text({ content: " Enter confirm", fg: "#555555" }));
         children.push(Text({ content: " Esc cancel", fg: "#555555" }));
-      } else if (overviewStep === "attach-pick") {
-        children.push(Text({ content: ` ATTACH TO '${overviewAttachTarget?.name}'`, fg: "#00ff00" }));
+      } else if (workspaceStep === "attach-pick") {
+        children.push(Text({ content: ` ATTACH TO WORKSPACE '${workspaceAttachTarget?.name}'`, fg: "#00ff00" }));
         children.push(Text({ content: "" }));
         children.push(Text({ content: " Select session:", fg: "#cccccc" }));
         children.push(Text({ content: "" }));
-        for (let i = 0; i < overviewAttachChoices.length; i++) {
-          const isSel = i === overviewAttachIndex;
+        for (let i = 0; i < workspaceAttachChoices.length; i++) {
+          const isSel = i === workspaceAttachIndex;
           children.push(
             Text({
-              content: `${isSel ? " ▸" : "  "} ${overviewAttachChoices[i].label}`,
+              content: `${isSel ? " ▸" : "  "} ${workspaceAttachChoices[i].label}`,
               fg: isSel ? "#ffffff" : "#888888",
               bg: isSel ? "#333366" : undefined,
             }),
           );
         }
-        if (overviewAttachChoices.length === 0) {
+        if (workspaceAttachChoices.length === 0) {
           children.push(Text({ content: "  No available sessions", fg: "#555555" }));
         }
         children.push(Box({ flexGrow: 1 }));
@@ -604,18 +604,18 @@ export async function dashboardCommand(): Promise<void> {
                 }
               }
             }
-          } else if (row.type === "overview-header") {
+          } else if (row.type === "workspace-header") {
             children.push(Text({ content: "" }));
             children.push(
               Text({
-                content: " OVERVIEWS",
+                content: " WORKSPACES",
                 fg: "#8888ff",
               }),
             );
             children.push(Text({ content: "" }));
-          } else if (row.type === "overview") {
-            const ov = row.overview;
-            const isExpanded = expandedOverviews.has(ov.id);
+          } else if (row.type === "workspace") {
+            const ov = row.workspace;
+            const isExpanded = expandedWorkspaces.has(ov.id);
             const arrow = isExpanded ? "▾" : "▸";
             const count = ov.sessionIds.length;
             children.push(
@@ -625,7 +625,7 @@ export async function dashboardCommand(): Promise<void> {
                 bg: isSelected ? "#333366" : undefined,
               }),
             );
-          } else if (row.type === "overview-member") {
+          } else if (row.type === "workspace-member") {
             const session = row.session;
             const statusColor = session.status === "running" ? "#00ff00" : "#ff4444";
             const icon = session.status === "running" ? "●" : "○";
@@ -651,9 +651,9 @@ export async function dashboardCommand(): Promise<void> {
         children.push(Text({ content: " j/k navigate", fg: "#555555" }));
         children.push(Text({ content: " l/h expand/collapse", fg: "#555555" }));
         children.push(Text({ content: " Enter attach", fg: "#555555" }));
-        children.push(Text({ content: " n new session  o new overview", fg: "#555555" }));
-        children.push(Text({ content: " c container    a attach to overview", fg: "#555555" }));
-        children.push(Text({ content: " p add pane     d detach from overview", fg: "#555555" }));
+        children.push(Text({ content: " n new session  o new workspace", fg: "#555555" }));
+        children.push(Text({ content: " c container    a attach to workspace", fg: "#555555" }));
+        children.push(Text({ content: " p add pane     d detach from workspace", fg: "#555555" }));
         children.push(Text({ content: " x kill/delete  r refresh  q quit", fg: "#555555" }));
       }
     }
@@ -725,35 +725,35 @@ export async function dashboardCommand(): Promise<void> {
 
   // Keyboard handling
   renderer.keyInput.on("keypress", (key: KeyEvent) => {
-    // --- Overview creation / attach flow ---
-    if (overviewStep) {
+    // --- Workspace creation / attach flow ---
+    if (workspaceStep) {
       if (key.name === "escape") {
-        overviewStep = null;
-        overviewInput = "";
-        overviewAttachTarget = null;
+        workspaceStep = null;
+        workspaceInput = "";
+        workspaceAttachTarget = null;
         render();
         return;
       }
 
-      if (overviewStep === "name") {
-        if (key.name === "return" && overviewInput.trim()) {
-          const name = overviewInput.trim();
+      if (workspaceStep === "name") {
+        if (key.name === "return" && workspaceInput.trim()) {
+          const name = workspaceInput.trim();
           const config = loadConfig();
           const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-          const ov: Overview = {
+          const ws: Workspace = {
             id: `ov_${slug}`,
             name,
             sessionIds: [],
             maxPanes: config.maxPanesPerWindow,
           };
-          addOverview(ov);
-          overviewStep = null;
-          overviewInput = "";
+          addWorkspace(ws);
+          workspaceStep = null;
+          workspaceInput = "";
           render();
           return;
         }
         if (key.name === "backspace") {
-          overviewInput = overviewInput.slice(0, -1);
+          workspaceInput = workspaceInput.slice(0, -1);
           render();
           return;
         }
@@ -764,33 +764,33 @@ export async function dashboardCommand(): Promise<void> {
           !key.ctrl &&
           !key.meta
         ) {
-          overviewInput += key.sequence;
+          workspaceInput += key.sequence;
           render();
           return;
         }
         return;
       }
 
-      if (overviewStep === "attach-pick") {
+      if (workspaceStep === "attach-pick") {
         if (key.name === "j" || key.name === "down") {
-          if (overviewAttachIndex < overviewAttachChoices.length - 1) {
-            overviewAttachIndex++;
+          if (workspaceAttachIndex < workspaceAttachChoices.length - 1) {
+            workspaceAttachIndex++;
             render();
           }
           return;
         }
         if (key.name === "k" || key.name === "up") {
-          if (overviewAttachIndex > 0) {
-            overviewAttachIndex--;
+          if (workspaceAttachIndex > 0) {
+            workspaceAttachIndex--;
             render();
           }
           return;
         }
-        if (key.name === "return" && overviewAttachTarget && overviewAttachChoices.length > 0) {
-          const session = overviewAttachChoices[overviewAttachIndex].session;
-          attachSessionToOverview(overviewAttachTarget.id, session.id);
-          overviewStep = null;
-          overviewAttachTarget = null;
+        if (key.name === "return" && workspaceAttachTarget && workspaceAttachChoices.length > 0) {
+          const session = workspaceAttachChoices[workspaceAttachIndex].session;
+          attachSessionToWorkspace(workspaceAttachTarget.id, session.id);
+          workspaceStep = null;
+          workspaceAttachTarget = null;
           render();
           return;
         }
@@ -997,7 +997,7 @@ export async function dashboardCommand(): Promise<void> {
           const newRefreshed = refreshSessions();
           groups = newRefreshed.groups;
           allSessions = newRefreshed.allSessions;
-          navRows = buildNavRows(groups, collapsedRepos, expandedOverviews, allSessions);
+          navRows = buildNavRows(groups, collapsedRepos, expandedWorkspaces, allSessions);
           const newIdx = navRows.findIndex(
             (r) => r.type === "session" && r.session.id === identifier,
           );
@@ -1125,9 +1125,9 @@ export async function dashboardCommand(): Promise<void> {
           expandedSessions.add(row.session.id);
           render();
         }
-      } else if (row.type === "overview") {
-        if (!expandedOverviews.has(row.overview.id)) {
-          expandedOverviews.add(row.overview.id);
+      } else if (row.type === "workspace") {
+        if (!expandedWorkspaces.has(row.workspace.id)) {
+          expandedWorkspaces.add(row.workspace.id);
           render();
         }
       }
@@ -1148,9 +1148,9 @@ export async function dashboardCommand(): Promise<void> {
           expandedSessions.delete(row.session.id);
           render();
         }
-      } else if (row.type === "overview") {
-        if (expandedOverviews.has(row.overview.id)) {
-          expandedOverviews.delete(row.overview.id);
+      } else if (row.type === "workspace") {
+        if (expandedWorkspaces.has(row.workspace.id)) {
+          expandedWorkspaces.delete(row.workspace.id);
           render();
         }
       }
@@ -1165,14 +1165,14 @@ export async function dashboardCommand(): Promise<void> {
         render();
         return;
       }
-      if (row.type === "overview") {
-        // Delete the overview (no kill confirmation needed, it's just metadata)
-        const ov = row.overview;
+      if (row.type === "workspace") {
+        // Delete the workspace (no kill confirmation needed, it's just metadata)
+        const ov = row.workspace;
         if (ov.tmuxSession && sessionExists(ov.tmuxSession)) {
           killSession(ov.tmuxSession);
         }
-        removeOverview(ov.id);
-        expandedOverviews.delete(ov.id);
+        removeWorkspace(ov.id);
+        expandedWorkspaces.delete(ov.id);
         render();
         return;
       }
@@ -1191,27 +1191,27 @@ export async function dashboardCommand(): Promise<void> {
     }
 
     if (key.name === "o") {
-      // Create a new overview
-      overviewStep = "name";
-      overviewInput = "";
+      // Create a new workspace
+      workspaceStep = "name";
+      workspaceInput = "";
       render();
       return;
     }
 
     if (key.name === "a") {
-      // Attach session to overview (only when an overview row is selected)
+      // Attach session to workspace (only when a workspace row is selected)
       const row = navRows[selectedIndex];
-      if (!row || row.type !== "overview") return;
-      const ov = findOverview(row.overview.id);
+      if (!row || row.type !== "workspace") return;
+      const ov = findWorkspace(row.workspace.id);
       if (!ov) return;
       if (ov.sessionIds.length >= ov.maxPanes) return;
 
-      // Build list of running sessions not already in this overview and not in another overview
-      const allOvs = loadOverviews();
-      const sessionsInOtherOverviews = new Set<string>();
+      // Build list of running sessions not already in this workspace and not in another workspace
+      const allOvs = loadWorkspaces();
+      const sessionsInOtherWorkspaces = new Set<string>();
       for (const o of allOvs) {
         if (o.id !== ov.id) {
-          for (const sid of o.sessionIds) sessionsInOtherOverviews.add(sid);
+          for (const sid of o.sessionIds) sessionsInOtherWorkspaces.add(sid);
         }
       }
 
@@ -1219,23 +1219,23 @@ export async function dashboardCommand(): Promise<void> {
         .filter((s) =>
           s.status === "running" &&
           !ov.sessionIds.includes(s.id) &&
-          !sessionsInOtherOverviews.has(s.id)
+          !sessionsInOtherWorkspaces.has(s.id)
         )
         .map((s) => ({ label: `${s.id} (${s.repo})`, session: s }));
 
-      overviewAttachTarget = ov;
-      overviewAttachChoices = choices;
-      overviewAttachIndex = 0;
-      overviewStep = "attach-pick";
+      workspaceAttachTarget = ov;
+      workspaceAttachChoices = choices;
+      workspaceAttachIndex = 0;
+      workspaceStep = "attach-pick";
       render();
       return;
     }
 
     if (key.name === "d") {
-      // Detach session from overview (only when an overview-member row is selected)
+      // Detach session from workspace (only when a workspace-member row is selected)
       const row = navRows[selectedIndex];
-      if (!row || row.type !== "overview-member") return;
-      detachSessionFromOverview(row.overview.id, row.session.id);
+      if (!row || row.type !== "workspace-member") return;
+      detachSessionFromWorkspace(row.workspace.id, row.session.id);
       render();
       return;
     }
@@ -1315,22 +1315,22 @@ export async function dashboardCommand(): Promise<void> {
         return;
       }
 
-      // Enter on overview header — no-op
-      if (row.type === "overview-header") return;
+      // Enter on workspace header — no-op
+      if (row.type === "workspace-header") return;
 
-      // Enter on overview — toggle expand
-      if (row.type === "overview") {
-        if (expandedOverviews.has(row.overview.id)) {
-          expandedOverviews.delete(row.overview.id);
+      // Enter on workspace — toggle expand
+      if (row.type === "workspace") {
+        if (expandedWorkspaces.has(row.workspace.id)) {
+          expandedWorkspaces.delete(row.workspace.id);
         } else {
-          expandedOverviews.add(row.overview.id);
+          expandedWorkspaces.add(row.workspace.id);
         }
         render();
         return;
       }
 
-      // Enter on overview-member — attach/preview that session
-      const session = row.type === "overview-member" ? row.session : row.session;
+      // Enter on workspace-member — attach/preview that session
+      const session = row.type === "workspace-member" ? row.session : row.session;
 
       // Restart stopped sessions: re-create tmux session and launch agent
       if (session.status !== "running") {

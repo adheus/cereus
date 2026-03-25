@@ -12,13 +12,13 @@ import {
   paneRemoveCommand,
 } from "./commands/pane.js";
 import {
-  overviewCreateCommand,
-  overviewListCommand,
-  overviewShowCommand,
-  overviewAttachCommand,
-  overviewDetachCommand,
-  overviewDeleteCommand,
-} from "./commands/overview.js";
+  workspaceCreateCommand,
+  workspaceListCommand,
+  workspaceShowCommand,
+  workspaceAttachCommand,
+  workspaceDetachCommand,
+  workspaceDeleteCommand,
+} from "./commands/workspace.js";
 
 const program = new Command();
 
@@ -100,50 +100,50 @@ pane
   .argument("<pane-id>", "Pane ID to remove")
   .action(paneRemoveCommand);
 
-const overview = program
-  .command("overview")
-  .alias("ov")
-  .description("Manage session overviews");
+const workspace = program
+  .command("workspace")
+  .alias("ws")
+  .description("Manage session workspaces");
 
-overview
+workspace
   .command("create")
-  .description("Create a new overview")
-  .argument("<name>", "Overview name")
-  .option("--max-panes <n>", "Maximum panes in the overview", parseInt)
-  .action(overviewCreateCommand);
+  .description("Create a new workspace")
+  .argument("<name>", "Workspace name")
+  .option("--max-panes <n>", "Maximum panes in the workspace", parseInt)
+  .action(workspaceCreateCommand);
 
-overview
+workspace
   .command("list")
   .alias("ls")
-  .description("List all overviews")
-  .action(overviewListCommand);
+  .description("List all workspaces")
+  .action(workspaceListCommand);
 
-overview
+workspace
   .command("show")
-  .description("Open an overview (arrange session panes)")
-  .argument("<name>", "Overview name")
-  .action(overviewShowCommand);
+  .description("Open a workspace (arrange session panes)")
+  .argument("<name>", "Workspace name")
+  .action(workspaceShowCommand);
 
-overview
+workspace
   .command("attach")
-  .description("Attach a session to an overview")
-  .argument("<name>", "Overview name")
+  .description("Attach a session to a workspace")
+  .argument("<name>", "Workspace name")
   .argument("<session>", "Session identifier")
-  .action(overviewAttachCommand);
+  .action(workspaceAttachCommand);
 
-overview
+workspace
   .command("detach")
-  .description("Detach a session from an overview")
-  .argument("<name>", "Overview name")
+  .description("Detach a session from a workspace")
+  .argument("<name>", "Workspace name")
   .argument("<session>", "Session identifier")
-  .action(overviewDetachCommand);
+  .action(workspaceDetachCommand);
 
-overview
+workspace
   .command("delete")
   .alias("rm")
-  .description("Delete an overview")
-  .argument("<name>", "Overview name")
-  .action(overviewDeleteCommand);
+  .description("Delete a workspace")
+  .argument("<name>", "Workspace name")
+  .action(workspaceDeleteCommand);
 
 const alias = program
   .command("alias")
