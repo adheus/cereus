@@ -23,6 +23,8 @@ import {
   switchClient,
   getFirstPane,
   listSessionPanes,
+  splitPaneAt,
+  getWindowPaneIds,
 } from "../lib/tmux.js";
 import {
   loadConfig,
@@ -48,6 +50,16 @@ import {
   type Workspace,
 } from "../lib/workspaces.js";
 import { execFileSync } from "node:child_process";
+
+function getCurrentPaneId(): string {
+  try {
+    return execFileSync("tmux", ["display-message", "-p", "#{pane_id}"], {
+      encoding: "utf-8",
+    }).trim();
+  } catch {
+    return "";
+  }
+}
 
 const VERSION = "0.2.0";
 
@@ -157,10 +169,16 @@ export async function dashboardCommand(): Promise<void> {
   const { createCliRenderer, Box, Text } = await import("@opentui/core");
   type KeyEvent = import("@opentui/core").KeyEvent;
 
+  const dashboardPaneId = getCurrentPaneId();
+
   let selectedIndex = 0;
   const expandedSessions = new Set<string>();
   const collapsedRepos = new Set<string>();
   const expandedWorkspaces = new Set<string>();
+
+  // Active workspace: panes mounted in the dashboard window alongside the dashboard pane
+  let activeWorkspaceId: string | null = null;
+  const mountedPaneIds: string[] = []; // pane IDs created in the dashboard window for workspace sessions
 
   // Navigation list (rebuilt on each render)
   let groups: RepoGroup[] = [];
@@ -203,7 +221,133 @@ export async function dashboardCommand(): Promise<void> {
     enableMouseMovement: false,
   });
 
+  /** Unmount all workspace panes from the dashboard window */
+  function unmountWorkspace() {
+    if (!activeWorkspaceId) return;
+
+    // Swap agent panes back to their home sessions
+    const ws = findWorkspace(activeWorkspaceId);
+    if (ws) {
+      for (const sid of ws.sessionIds) {
+        const session = loadSessions().find((s) => s.id === sid);
+        if (session?.mountedIn === ws.id) {
+          // Find the session's pane in our window by title
+          const windowPanes = getWindowPaneIds(dashboardPaneId);
+          for (const pid of windowPanes) {
+            if (pid === dashboardPaneId) continue;
+            try {
+              const title = execFileSync(
+                "tmux",
+                ["display-message", "-t", pid, "-p", "#{pane_title}"],
+                { encoding: "utf-8" },
+              ).trim();
+              if (title === session.id) {
+                // Swap back to session's home
+                const homePanes = listSessionPanes(session.tmuxSession);
+                if (homePanes.length > 0) {
+                  execFileSync(
+                    "tmux",
+                    ["swap-pane", "-s", pid, "-t", homePanes[0]],
+                    { stdio: "ignore" },
+                  );
+                }
+                break;
+              }
+            } catch { /* ignore */ }
+          }
+          updateSession(session.id, { mountedIn: undefined });
+        }
+      }
+    }
+
+    // Kill all extra panes in dashboard window (keep only dashboard pane)
+    const remainingPanes = getWindowPaneIds(dashboardPaneId);
+    for (const pid of remainingPanes) {
+      if (pid !== dashboardPaneId) {
+        killPane(pid);
+      }
+    }
+
+    mountedPaneIds.length = 0;
+    activeWorkspaceId = null;
+  }
+
+  /** Mount workspace sessions as panes next to the dashboard */
+  function mountWorkspace(workspace: Workspace) {
+    // Unmount any previously active workspace
+    unmountWorkspace();
+
+    const sessions = loadSessions();
+    const validSessions = workspace.sessionIds
+      .map((id) => sessions.find((s) => s.id === id))
+      .filter((s): s is Session => !!s && sessionExists(s.tmuxSession));
+
+    if (validSessions.length === 0) return;
+
+    activeWorkspaceId = workspace.id;
+
+    for (const session of validSessions) {
+      if (session.mountedIn) continue; // already mounted elsewhere
+
+      const agentPaneId = getFirstPane(session.tmuxSession);
+      if (!agentPaneId) continue;
+
+      // Get panes in the dashboard window, excluding the dashboard pane itself
+      const windowPanes = getWindowPaneIds(dashboardPaneId);
+      const contentPanes = windowPanes.filter((p) => p !== dashboardPaneId);
+      const contentCount = contentPanes.length;
+
+      // Create a new pane using smart layout (relative to content panes only)
+      let targetPaneId: string;
+
+      if (contentCount === 0) {
+        // First content pane: split the dashboard pane horizontally
+        targetPaneId = splitPaneAt(dashboardPaneId, session.worktreePath, "h");
+      } else {
+        // Subsequent panes: smart layout among content panes
+        let direction: "h" | "v";
+        let splitTarget: string;
+
+        switch (contentCount) {
+          case 1:
+            direction = "v";
+            splitTarget = contentPanes[0];
+            break;
+          case 2:
+            direction = "v";
+            splitTarget = contentPanes[0];
+            break;
+          default:
+            direction = "h";
+            splitTarget = contentPanes[contentPanes.length - 1];
+            break;
+        }
+
+        targetPaneId = splitPaneAt(splitTarget, session.worktreePath, direction);
+      }
+
+      // Swap agent pane into the new slot
+      try {
+        execFileSync(
+          "tmux",
+          ["swap-pane", "-s", agentPaneId, "-t", targetPaneId],
+          { stdio: "ignore" },
+        );
+        // After swap: agentPaneId is now in dashboard window, targetPaneId went to session's home
+        setPaneTitle(agentPaneId, session.id);
+        mountedPaneIds.push(agentPaneId);
+        updateSession(session.id, { mountedIn: workspace.id });
+      } catch { /* ignore */ }
+    }
+
+    // Focus back on dashboard pane
+    try {
+      execFileSync("tmux", ["select-pane", "-t", dashboardPaneId]);
+    } catch { /* ignore */ }
+  }
+
   function cleanup() {
+    unmountWorkspace();
     clearInterval(pollInterval);
     renderer.destroy();
   }
@@ -404,12 +548,14 @@ export async function dashboardCommand(): Promise<void> {
           } else if (row.type === "workspace") {
             const ws = row.workspace;
             const isExpanded = expandedWorkspaces.has(ws.id);
+            const isActive = activeWorkspaceId === ws.id;
             const arrow = isExpanded ? "▾" : "▸";
             const count = ws.sessionIds.length;
+            const activeLabel = isActive ? " ▶" : "";
             children.push(
               Text({
-                content: `  ${isSelected ? arrow : " "} ${ws.name} (${count} session${count !== 1 ? "s" : ""})`,
-                fg: isSelected ? "#ffffff" : "#aa88ff",
+                content: `  ${isSelected ? arrow : " "} ${ws.name} (${count} session${count !== 1 ? "s" : ""})${activeLabel}`,
+                fg: isSelected ? "#ffffff" : isActive ? "#00ff00" : "#aa88ff",
                 bg: isSelected ? "#333366" : undefined,
               }),
             );
@@ -885,10 +1031,14 @@ export async function dashboardCommand(): Promise<void> {
       }
       if (row.type === "workspace") {
         const ws = row.workspace;
+        // Unmount if this workspace is active in dashboard
+        if (activeWorkspaceId === ws.id) {
+          unmountWorkspace();
+        }
+        // Also kill separate tmux session if it exists (from CLI `workspace show`)
         if (ws.tmuxSession && sessionExists(ws.tmuxSession)) {
           killSession(ws.tmuxSession);
         }
-        // Unmount all sessions
         for (const sid of ws.sessionIds) {
           updateSession(sid, { mountedIn: undefined });
         }
@@ -910,30 +1060,27 @@ export async function dashboardCommand(): Promise<void> {
 
       const type: SubPane["type"] = key.name === "e" ? "editor" : "terminal";
 
-      if (row.type === "workspace-member" && session.mountedIn) {
-        // Session is mounted in a workspace — split in the workspace's tmux session
-        const ws = findWorkspace(session.mountedIn);
-        if (ws?.tmuxSession && sessionExists(ws.tmuxSession)) {
-          const wsPanes = listSessionPanes(ws.tmuxSession);
-          // Find the agent pane for this session in the workspace (by title)
+      if (row.type === "workspace-member" && session.mountedIn && activeWorkspaceId) {
+        // Session is mounted in the dashboard window — find its pane by title
+        const windowPanes = getWindowPaneIds(dashboardPaneId);
+        let targetPane: string | null = null;
+        for (const pid of windowPanes) {
+          if (pid === dashboardPaneId) continue;
           try {
-            const output = execFileSync(
+            const title = execFileSync(
               "tmux",
-              ["list-panes", "-t", ws.tmuxSession, "-F", "#{pane_id}\t#{pane_title}"],
+              ["display-message", "-t", pid, "-p", "#{pane_title}"],
               { encoding: "utf-8" },
             ).trim();
-            const lines = output.split("\n").filter(Boolean);
-            let targetPane: string | null = null;
-            for (const line of lines) {
-              const [pid, title] = line.split("\t");
-              if (title === session.id) { targetPane = pid; break; }
-            }
-            if (targetPane) {
-              const newPaneId = smartSplitAt(targetPane, session.worktreePath);
-              setPaneTitle(newPaneId, `${session.id} [${type}]`);
-              if (type === "editor") sendKeys(newPaneId, "nvim .");
-              // Workspace-local pane — NOT tracked in session.panes
-            }
+            if (title === session.id) { targetPane = pid; break; }
+          } catch { /* ignore */ }
+        }
+        if (targetPane) {
+          try {
+            const newPaneId = smartSplitAt(targetPane, session.worktreePath);
+            setPaneTitle(newPaneId, `${session.id} [${type}]`);
+            if (type === "editor") sendKeys(newPaneId, "nvim .");
+            // Workspace-local pane — NOT tracked in session.panes
           } catch { /* ignore */ }
         }
       } else {
@@ -997,9 +1144,38 @@ export async function dashboardCommand(): Promise<void> {
     if (key.name === "d") {
       const row = navRows[selectedIndex];
       if (!row || row.type !== "workspace-member") return;
-      // Unmount the session
-      updateSession(row.session.id, { mountedIn: undefined });
-      detachSessionFromWorkspace(row.workspace.id, row.session.id);
+
+      const session = row.session;
+
+      // If mounted in dashboard window, swap the pane back home
+      if (session.mountedIn === row.workspace.id && activeWorkspaceId === row.workspace.id) {
+        const windowPanes = getWindowPaneIds(dashboardPaneId);
+        for (const pid of windowPanes) {
+          if (pid === dashboardPaneId) continue;
+          try {
+            const title = execFileSync(
+              "tmux",
+              ["display-message", "-t", pid, "-p", "#{pane_title}"],
+              { encoding: "utf-8" },
+            ).trim();
+            if (title === session.id) {
+              const homePanes = listSessionPanes(session.tmuxSession);
+              if (homePanes.length > 0) {
+                execFileSync(
+                  "tmux",
+                  ["swap-pane", "-s", pid, "-t", homePanes[0]],
+                  { stdio: "ignore" },
+                );
+              }
+              killPane(pid);
+              break;
+            }
+          } catch { /* ignore */ }
+        }
+      }
+
+      updateSession(session.id, { mountedIn: undefined });
+      detachSessionFromWorkspace(row.workspace.id, session.id);
       render();
       return;
     }
@@ -1075,11 +1251,14 @@ export async function dashboardCommand(): Promise<void> {
 
       if (row.type === "workspace-header") return;
 
-      // Enter on workspace — toggle expand
+      // Enter on workspace — mount its sessions as panes
       if (row.type === "workspace") {
-        if (expandedWorkspaces.has(row.workspace.id)) {
-          expandedWorkspaces.delete(row.workspace.id);
+        if (activeWorkspaceId === row.workspace.id) {
+          // Already active — unmount
+          unmountWorkspace();
         } else {
+          mountWorkspace(row.workspace);
+          // Auto-expand so members are visible
           expandedWorkspaces.add(row.workspace.id);
         }
         render();
