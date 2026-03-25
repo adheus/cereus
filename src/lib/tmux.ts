@@ -197,17 +197,12 @@ export function getWindowPaneIds(targetPane: string): string[] {
  * Uses the same layout logic as smartSplit but operates on the window
  * containing the given pane rather than the current window.
  *
- * @param excludePanes - Pane IDs to exclude from the count (e.g. the dashboard pane).
- *                       These panes are ignored when deciding which layout step to use.
  */
 export function smartSplitAt(
   targetPane: string,
   cwd: string,
-  excludePanes: string[] = [],
 ): string {
-  const allPanes = getWindowPaneIds(targetPane);
-  const excludeSet = new Set(excludePanes);
-  const panes = allPanes.filter((p) => !excludeSet.has(p));
+  const panes = getWindowPaneIds(targetPane);
   const paneCount = panes.length;
 
   let direction: "h" | "v";
@@ -233,6 +228,26 @@ export function smartSplitAt(
   }
 
   return splitPaneAt(splitTarget, cwd, direction);
+}
+
+/** List all pane IDs in a tmux session */
+export function listSessionPanes(sessionName: string): string[] {
+  try {
+    const output = execFileSync(
+      "tmux",
+      ["list-panes", "-t", sessionName, "-F", "#{pane_id}"],
+      { encoding: "utf-8" },
+    ).trim();
+    return output.split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Get the first pane of a tmux session */
+export function getFirstPane(sessionName: string): string | null {
+  const panes = listSessionPanes(sessionName);
+  return panes[0] ?? null;
 }
 
 export function capturePaneOutput(target: string, lines = 500): string {

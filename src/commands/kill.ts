@@ -49,13 +49,8 @@ export async function killCommand(
     }
   }
 
-  if (session.tmuxPane) {
-    killPane(session.tmuxPane);
-    console.log(chalk.green("✔"), `Pane '${session.tmuxPane}' killed.`);
-  } else {
-    killSession(session.tmuxSession);
-    console.log(chalk.green("✔"), `Tmux session '${identifier}' killed.`);
-  }
+  killSession(session.tmuxSession);
+  console.log(chalk.green("✔"), `Tmux session '${identifier}' killed.`);
 
   if (session.container) {
     console.log(chalk.blue("▸"), "Stopping devcontainer...");
@@ -110,11 +105,7 @@ async function killAll(options: KillOptions): Promise<void> {
         if (sub.type !== "agent") killPane(sub.paneId);
       }
     }
-    if (session.tmuxPane) {
-      killPane(session.tmuxPane);
-    } else {
-      killSession(session.tmuxSession);
-    }
+    killSession(session.tmuxSession);
     if (session.container) {
       stopContainer(session.worktreePath);
     }

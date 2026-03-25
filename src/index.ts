@@ -54,8 +54,6 @@ program
   .command("attach")
   .description("Attach to an existing session")
   .argument("<identifier>", "Session identifier")
-  .option("--split", "Attach as split pane")
-  .option("--window", "Attach as new window")
   .action(attachCommand);
 
 program

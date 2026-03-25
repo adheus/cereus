@@ -5,6 +5,7 @@ import {
   addSession,
   removeSession,
   addSubPane,
+  updateSession,
   type Session,
   type SubPane,
 } from "../lib/sessions.js";
@@ -19,6 +20,9 @@ import {
   setSessionPaneBorderStatus,
   setPaneTitle,
   smartSplitAt,
+  switchClient,
+  getFirstPane,
+  listSessionPanes,
 } from "../lib/tmux.js";
 import {
   loadConfig,
@@ -41,7 +45,6 @@ import {
   attachSessionToWorkspace,
   detachSessionFromWorkspace,
   removeWorkspace,
-  updateWorkspace,
   type Workspace,
 } from "../lib/workspaces.js";
 import { execFileSync } from "node:child_process";
@@ -77,9 +80,7 @@ function groupByRepo(sessions: Session[]): RepoGroup[] {
 function refreshSessions(): { groups: RepoGroup[]; allSessions: Session[] } {
   const sessions = loadSessions();
   for (const s of sessions) {
-    const alive = s.tmuxPane
-      ? paneExists(s.tmuxPane)
-      : sessionExists(s.tmuxSession);
+    const alive = sessionExists(s.tmuxSession);
     s.status = alive ? "running" : "stopped";
   }
   return { groups: groupByRepo(sessions), allSessions: sessions };
@@ -105,13 +106,13 @@ function buildNavRows(
   const workspaces = loadWorkspaces();
   if (workspaces.length > 0) {
     rows.push({ type: "workspace-header" });
-    for (const ov of workspaces) {
-      rows.push({ type: "workspace", workspace: ov });
-      if (expandedWorkspaces.has(ov.id)) {
-        for (const sid of ov.sessionIds) {
+    for (const ws of workspaces) {
+      rows.push({ type: "workspace", workspace: ws });
+      if (expandedWorkspaces.has(ws.id)) {
+        for (const sid of ws.sessionIds) {
           const session = allSessions.find((s) => s.id === sid);
           if (session) {
-            rows.push({ type: "workspace-member", workspace: ov, session });
+            rows.push({ type: "workspace-member", workspace: ws, session });
           }
         }
       }
@@ -119,49 +120,6 @@ function buildNavRows(
   }
 
   return rows;
-}
-
-function getCurrentPaneId(): string {
-  try {
-    return execFileSync("tmux", ["display-message", "-p", "#{pane_id}"], {
-      encoding: "utf-8",
-    }).trim();
-  } catch {
-    return "";
-  }
-}
-
-/** Resolve the actual tmux pane ID for a session (works for both pane-based and session-based) */
-function resolveSessionPaneId(session: Session): string | null {
-  if (session.tmuxPane && paneExists(session.tmuxPane)) {
-    return session.tmuxPane;
-  }
-  if (session.tmuxSession && sessionExists(session.tmuxSession)) {
-    try {
-      const output = execFileSync(
-        "tmux",
-        ["list-panes", "-t", session.tmuxSession, "-F", "#{pane_id}"],
-        { encoding: "utf-8" },
-      ).trim();
-      const panes = output.split("\n").filter(Boolean);
-      return panes[0] || null;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-function createPreviewSplit(cwd: string, dashboardPaneId: string): string {
-  return execFileSync(
-    "tmux",
-    [
-      "split-window", "-h", "-t", dashboardPaneId,
-      "-c", cwd,
-      "-P", "-F", "#{pane_id}", "-l", "70%",
-    ],
-    { encoding: "utf-8" },
-  ).trim();
 }
 
 function listWorkspaceRepos(workspacePath: string, maxDepth = 3): string[] {
@@ -199,12 +157,7 @@ export async function dashboardCommand(): Promise<void> {
   const { createCliRenderer, Box, Text } = await import("@opentui/core");
   type KeyEvent = import("@opentui/core").KeyEvent;
 
-  const dashboardPaneId = getCurrentPaneId();
-
   let selectedIndex = 0;
-  let previewPaneId: string | null = null;
-  let displacedPaneId: string | null = null;
-  let swappedSessionId: string | null = null;
   const expandedSessions = new Set<string>();
   const collapsedRepos = new Set<string>();
   const expandedWorkspaces = new Set<string>();
@@ -251,126 +204,8 @@ export async function dashboardCommand(): Promise<void> {
   });
 
   function cleanup() {
-    // Restore swapped pane to its original session, then clean up
-    if (displacedPaneId && previewPaneId && paneExists(previewPaneId) && paneExists(displacedPaneId)) {
-      try {
-        execFileSync(
-          "tmux",
-          ["swap-pane", "-s", previewPaneId, "-t", displacedPaneId],
-          { stdio: "ignore" },
-        );
-      } catch { /* ignore */ }
-      // After restore: displacedPaneId is back in dashboard (the original empty preview pane)
-      killPane(displacedPaneId);
-    } else if (previewPaneId && paneExists(previewPaneId)) {
-      killPane(previewPaneId);
-    }
-    previewPaneId = null;
-    displacedPaneId = null;
-    swappedSessionId = null;
-    // Restore automatic window naming
-    try {
-      execFileSync("tmux", [
-        "set-option", "-w", "-t", dashboardPaneId, "automatic-rename", "on",
-      ]);
-    } catch { /* ignore */ }
     clearInterval(pollInterval);
     renderer.destroy();
-  }
-
-  function focusDashboard() {
-    try {
-      execFileSync("tmux", ["select-pane", "-t", dashboardPaneId]);
-    } catch { /* ignore */ }
-  }
-
-  function restoreSwappedPane() {
-    if (displacedPaneId && previewPaneId && paneExists(previewPaneId) && paneExists(displacedPaneId)) {
-      try {
-        execFileSync(
-          "tmux",
-          ["swap-pane", "-s", previewPaneId, "-t", displacedPaneId],
-          { stdio: "ignore" },
-        );
-      } catch { /* ignore */ }
-      // After swap-back: displacedPaneId (original preview pane) is back in dashboard
-      previewPaneId = displacedPaneId;
-      displacedPaneId = null;
-      swappedSessionId = null;
-    }
-  }
-
-  function attachSession(session: Session) {
-    restoreSwappedPane();
-
-    const sessionPaneId = resolveSessionPaneId(session);
-
-    if (!previewPaneId || !paneExists(previewPaneId)) {
-      // Create a new preview split pane
-      const splitPaneId = createPreviewSplit(session.worktreePath, dashboardPaneId);
-      previewPaneId = splitPaneId;
-
-      if (sessionPaneId) {
-        // Swap session's pane into the preview position
-        try {
-          execFileSync(
-            "tmux",
-            ["swap-pane", "-s", sessionPaneId, "-t", splitPaneId],
-            { stdio: "ignore" },
-          );
-          // After swap: sessionPaneId is now in dashboard (preview position)
-          //             splitPaneId (original split) moved to session's tmux
-          displacedPaneId = splitPaneId;
-          previewPaneId = sessionPaneId;
-          swappedSessionId = session.id;
-        } catch {
-          // Swap failed, just cd to worktree in the split pane
-          try {
-            execFileSync("tmux", [
-              "send-keys", "-t", splitPaneId,
-              `cd ${session.worktreePath}`, "Enter",
-            ]);
-          } catch { /* ignore */ }
-        }
-      }
-    } else {
-      if (sessionPaneId) {
-        try {
-          execFileSync(
-            "tmux",
-            ["swap-pane", "-s", sessionPaneId, "-t", previewPaneId],
-            { stdio: "ignore" },
-          );
-          // After swap: sessionPaneId is in dashboard, previewPaneId went to session's tmux
-          displacedPaneId = previewPaneId;
-          previewPaneId = sessionPaneId;
-          swappedSessionId = session.id;
-        } catch {
-          try {
-            execFileSync("tmux", [
-              "send-keys", "-t", previewPaneId,
-              `cd ${session.worktreePath}`, "Enter",
-            ]);
-          } catch { /* ignore */ }
-        }
-      } else {
-        try {
-          execFileSync("tmux", [
-            "send-keys", "-t", previewPaneId,
-            `cd ${session.worktreePath}`, "Enter",
-          ]);
-        } catch { /* ignore */ }
-      }
-    }
-
-    // Set the window name to the session ID so it shows in the tmux status bar
-    try {
-      execFileSync("tmux", [
-        "rename-window", "-t", dashboardPaneId, `${session.id} (cereus)`,
-      ]);
-    } catch { /* ignore */ }
-
-    focusDashboard();
   }
 
   const CONTAINER_ID = "dashboard-root";
@@ -514,49 +349,33 @@ export async function dashboardCommand(): Promise<void> {
               const dim = "#888888";
               const statusLabel = activity === "idle" ? "idle" : session.status;
               children.push(
-                Text({
-                  content: `       Status:    ${statusLabel}`,
-                  fg: statusColor,
-                }),
+                Text({ content: `       Status:    ${statusLabel}`, fg: statusColor }),
               );
               children.push(
-                Text({
-                  content: `       Branch:    ${session.branch}`,
-                  fg: dim,
-                }),
+                Text({ content: `       Branch:    ${session.branch}`, fg: dim }),
               );
               children.push(
-                Text({
-                  content: `       Agent:     ${session.agent}`,
-                  fg: dim,
-                }),
+                Text({ content: `       Agent:     ${session.agent}`, fg: dim }),
               );
               children.push(
-                Text({
-                  content: `       Mode:      ${session.mode}`,
-                  fg: dim,
-                }),
+                Text({ content: `       Mode:      ${session.mode}`, fg: dim }),
               );
               if (session.container) {
                 children.push(
-                  Text({
-                    content: `       Container: yes`,
-                    fg: "#00aaff",
-                  }),
+                  Text({ content: `       Container: yes`, fg: "#00aaff" }),
+                );
+              }
+              if (session.mountedIn) {
+                children.push(
+                  Text({ content: `       Mounted:   ${session.mountedIn}`, fg: "#aa88ff" }),
                 );
               }
               children.push(
-                Text({
-                  content: `       Worktree:  ${session.worktreePath}`,
-                  fg: "#666666",
-                }),
+                Text({ content: `       Worktree:  ${session.worktreePath}`, fg: "#666666" }),
               );
               if (session.prompt) {
                 children.push(
-                  Text({
-                    content: `       Prompt:    ${session.prompt}`,
-                    fg: dim,
-                  }),
+                  Text({ content: `       Prompt:    ${session.prompt}`, fg: dim }),
                 );
               }
               if (session.panes && session.panes.length > 0) {
@@ -579,20 +398,17 @@ export async function dashboardCommand(): Promise<void> {
           } else if (row.type === "workspace-header") {
             children.push(Text({ content: "" }));
             children.push(
-              Text({
-                content: " WORKSPACES",
-                fg: "#8888ff",
-              }),
+              Text({ content: " WORKSPACES", fg: "#8888ff" }),
             );
             children.push(Text({ content: "" }));
           } else if (row.type === "workspace") {
-            const ov = row.workspace;
-            const isExpanded = expandedWorkspaces.has(ov.id);
+            const ws = row.workspace;
+            const isExpanded = expandedWorkspaces.has(ws.id);
             const arrow = isExpanded ? "▾" : "▸";
-            const count = ov.sessionIds.length;
+            const count = ws.sessionIds.length;
             children.push(
               Text({
-                content: `  ${isSelected ? arrow : " "} ${ov.name} (${count} session${count !== 1 ? "s" : ""})`,
+                content: `  ${isSelected ? arrow : " "} ${ws.name} (${count} session${count !== 1 ? "s" : ""})`,
                 fg: isSelected ? "#ffffff" : "#aa88ff",
                 bg: isSelected ? "#333366" : undefined,
               }),
@@ -622,7 +438,7 @@ export async function dashboardCommand(): Promise<void> {
       } else {
         children.push(Text({ content: " j/k navigate", fg: "#555555" }));
         children.push(Text({ content: " l/h expand/collapse", fg: "#555555" }));
-        children.push(Text({ content: " Enter attach", fg: "#555555" }));
+        children.push(Text({ content: " Enter switch to session", fg: "#555555" }));
         children.push(Text({ content: " n new session  w new workspace", fg: "#555555" }));
         children.push(Text({ content: " c container    a attach to workspace", fg: "#555555" }));
         children.push(Text({ content: " e editor       d detach from workspace", fg: "#555555" }));
@@ -652,21 +468,20 @@ export async function dashboardCommand(): Promise<void> {
 
   // Activity polling
   function pollActivity() {
-    const allSessions = loadSessions();
+    const sessions = loadSessions();
     let needsRender = false;
 
-    // Clean up entries for removed sessions
-    const activeIds = new Set(allSessions.map((s) => s.id));
+    const activeIds = new Set(sessions.map((s) => s.id));
     for (const id of activityMap.keys()) {
       if (!activeIds.has(id)) {
         activityMap.delete(id);
       }
     }
 
-    for (const session of allSessions) {
+    for (const session of sessions) {
       if (session.status !== "running") continue;
 
-      const paneId = resolveSessionPaneId(session);
+      const paneId = getFirstPane(session.tmuxSession);
       if (!paneId) continue;
 
       const output = capturePaneOutput(paneId, 1).trimEnd();
@@ -714,7 +529,7 @@ export async function dashboardCommand(): Promise<void> {
           const config = loadConfig();
           const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
           const ws: Workspace = {
-            id: `ov_${slug}`,
+            id: `ws_${slug}`,
             name,
             sessionIds: [],
             maxPanes: config.maxPanesPerWindow,
@@ -814,7 +629,6 @@ export async function dashboardCommand(): Promise<void> {
           const repo = newSessionRepo!;
           const identifier = newSessionInput.trim();
 
-          // Check for duplicates
           let hasDup = false;
           for (const g of groups) {
             if (g.sessions.some((s) => s.id === identifier)) {
@@ -851,7 +665,6 @@ export async function dashboardCommand(): Promise<void> {
             createWorktree(repoPath, worktreePath, identifier);
           }
 
-          // Validate container requirements
           if (newSessionContainer) {
             if (!devcontainerAvailable()) {
               newSessionStep = null;
@@ -893,7 +706,6 @@ export async function dashboardCommand(): Promise<void> {
             worktreePath,
             branch: identifier,
             tmuxSession: tmuxName,
-            tmuxPane: undefined,
             agent,
             prompt: undefined,
             container: newSessionContainer || undefined,
@@ -910,7 +722,6 @@ export async function dashboardCommand(): Promise<void> {
           newSessionRepo = null;
           newSessionContainer = false;
 
-          // Re-render and select the new session
           const newRefreshed = refreshSessions();
           groups = newRefreshed.groups;
           allSessions = newRefreshed.allSessions;
@@ -956,18 +767,13 @@ export async function dashboardCommand(): Promise<void> {
         return;
       }
 
-      // x = kill (keep worktree), X = kill + remove worktree
       const isShiftX = key.sequence === "X";
       if (key.name === "x" || isShiftX) {
         const session = loadSessions().find((s) => s.id === killConfirmSessionId);
         if (session) {
-          if (swappedSessionId === session.id) {
-            if (previewPaneId && paneExists(previewPaneId)) {
-              killPane(previewPaneId);
-            }
-            previewPaneId = null;
-            displacedPaneId = null;
-            swappedSessionId = null;
+          // Unmount from workspace if mounted
+          if (session.mountedIn) {
+            updateSession(session.id, { mountedIn: undefined });
           }
 
           // Kill sub-panes first
@@ -977,11 +783,7 @@ export async function dashboardCommand(): Promise<void> {
             }
           }
 
-          if (session.tmuxPane) {
-            killPane(session.tmuxPane);
-          } else {
-            killSession(session.tmuxSession);
-          }
+          killSession(session.tmuxSession);
 
           if (session.container) {
             stopContainer(session.worktreePath);
@@ -1000,7 +802,6 @@ export async function dashboardCommand(): Promise<void> {
         return;
       }
 
-      // Any other key cancels
       killConfirmSessionId = null;
       render();
       return;
@@ -1083,13 +884,16 @@ export async function dashboardCommand(): Promise<void> {
         return;
       }
       if (row.type === "workspace") {
-        // Delete the workspace (no kill confirmation needed, it's just metadata)
-        const ov = row.workspace;
-        if (ov.tmuxSession && sessionExists(ov.tmuxSession)) {
-          killSession(ov.tmuxSession);
+        const ws = row.workspace;
+        if (ws.tmuxSession && sessionExists(ws.tmuxSession)) {
+          killSession(ws.tmuxSession);
         }
-        removeWorkspace(ov.id);
-        expandedWorkspaces.delete(ov.id);
+        // Unmount all sessions
+        for (const sid of ws.sessionIds) {
+          updateSession(sid, { mountedIn: undefined });
+        }
+        removeWorkspace(ws.id);
+        expandedWorkspaces.delete(ws.id);
         render();
         return;
       }
@@ -1104,24 +908,51 @@ export async function dashboardCommand(): Promise<void> {
       else if (row.type === "workspace-member") session = row.session;
       if (!session || session.status !== "running") return;
 
-      const targetPaneId = resolveSessionPaneId(session);
-      if (!targetPaneId) return;
-
       const type: SubPane["type"] = key.name === "e" ? "editor" : "terminal";
-      try {
-        const newPaneId = smartSplitAt(targetPaneId, session.worktreePath, [dashboardPaneId]);
-        setPaneTitle(newPaneId, `${session.id} [${type}]`);
-        if (type === "editor") {
-          sendKeys(newPaneId, "nvim .");
+
+      if (row.type === "workspace-member" && session.mountedIn) {
+        // Session is mounted in a workspace — split in the workspace's tmux session
+        const ws = findWorkspace(session.mountedIn);
+        if (ws?.tmuxSession && sessionExists(ws.tmuxSession)) {
+          const wsPanes = listSessionPanes(ws.tmuxSession);
+          // Find the agent pane for this session in the workspace (by title)
+          try {
+            const output = execFileSync(
+              "tmux",
+              ["list-panes", "-t", ws.tmuxSession, "-F", "#{pane_id}\t#{pane_title}"],
+              { encoding: "utf-8" },
+            ).trim();
+            const lines = output.split("\n").filter(Boolean);
+            let targetPane: string | null = null;
+            for (const line of lines) {
+              const [pid, title] = line.split("\t");
+              if (title === session.id) { targetPane = pid; break; }
+            }
+            if (targetPane) {
+              const newPaneId = smartSplitAt(targetPane, session.worktreePath);
+              setPaneTitle(newPaneId, `${session.id} [${type}]`);
+              if (type === "editor") sendKeys(newPaneId, "nvim .");
+              // Workspace-local pane — NOT tracked in session.panes
+            }
+          } catch { /* ignore */ }
         }
-        addSubPane(session.id, { paneId: newPaneId, type });
-      } catch { /* ignore */ }
+      } else {
+        // Session is at home — split in its own tmux session
+        const targetPaneId = getFirstPane(session.tmuxSession);
+        if (!targetPaneId) return;
+
+        try {
+          const newPaneId = smartSplitAt(targetPaneId, session.worktreePath);
+          setPaneTitle(newPaneId, `${session.id} [${type}]`);
+          if (type === "editor") sendKeys(newPaneId, "nvim .");
+          addSubPane(session.id, { paneId: newPaneId, type });
+        } catch { /* ignore */ }
+      }
       render();
       return;
     }
 
     if (key.name === "w") {
-      // Create a new workspace
       workspaceStep = "name";
       workspaceInput = "";
       render();
@@ -1129,22 +960,20 @@ export async function dashboardCommand(): Promise<void> {
     }
 
     if (key.name === "a") {
-      // Attach session to workspace (works on workspace or workspace-member rows)
       const row = navRows[selectedIndex];
       if (!row) return;
       let wsId: string | undefined;
       if (row.type === "workspace") wsId = row.workspace.id;
       else if (row.type === "workspace-member") wsId = row.workspace.id;
       if (!wsId) return;
-      const ov = findWorkspace(wsId);
-      if (!ov) return;
-      if (ov.sessionIds.length >= ov.maxPanes) return;
+      const ws = findWorkspace(wsId);
+      if (!ws) return;
+      if (ws.sessionIds.length >= ws.maxPanes) return;
 
-      // Build list of running sessions not already in this workspace and not in another workspace
-      const allOvs = loadWorkspaces();
+      const allWs = loadWorkspaces();
       const sessionsInOtherWorkspaces = new Set<string>();
-      for (const o of allOvs) {
-        if (o.id !== ov.id) {
+      for (const o of allWs) {
+        if (o.id !== ws.id) {
           for (const sid of o.sessionIds) sessionsInOtherWorkspaces.add(sid);
         }
       }
@@ -1152,12 +981,12 @@ export async function dashboardCommand(): Promise<void> {
       const choices = allSessions
         .filter((s) =>
           s.status === "running" &&
-          !ov.sessionIds.includes(s.id) &&
+          !ws.sessionIds.includes(s.id) &&
           !sessionsInOtherWorkspaces.has(s.id)
         )
         .map((s) => ({ label: `${s.id} (${s.repo})`, session: s }));
 
-      workspaceAttachTarget = ov;
+      workspaceAttachTarget = ws;
       workspaceAttachChoices = choices;
       workspaceAttachIndex = 0;
       workspaceStep = "attach-pick";
@@ -1166,9 +995,10 @@ export async function dashboardCommand(): Promise<void> {
     }
 
     if (key.name === "d") {
-      // Detach session from workspace (only when a workspace-member row is selected)
       const row = navRows[selectedIndex];
       if (!row || row.type !== "workspace-member") return;
+      // Unmount the session
+      updateSession(row.session.id, { mountedIn: undefined });
       detachSessionFromWorkspace(row.workspace.id, row.session.id);
       render();
       return;
@@ -1179,20 +1009,16 @@ export async function dashboardCommand(): Promise<void> {
       const config = loadConfig();
       const workspace = resolveWorkspacePath(config);
 
-      const aliases = config.aliases; // alias name -> relative path
+      const aliases = config.aliases;
       const scannedRepos = listWorkspaceRepos(workspace);
 
-      // Build a map of repo name -> alias name (reverse lookup)
       const repoToAlias = new Map<string, string>();
       for (const [alias, relPath] of Object.entries(aliases)) {
-        // The last segment of the alias path is typically the repo dir name
         const repoName = path.basename(relPath);
         repoToAlias.set(repoName, alias);
-        // Also map the alias itself in case it doesn't match a scanned repo
         repoToAlias.set(alias, alias);
       }
 
-      // Build deduplicated choices
       const seen = new Set<string>();
       const choices: { label: string; value: string }[] = [];
 
@@ -1208,7 +1034,6 @@ export async function dashboardCommand(): Promise<void> {
         }
       }
 
-      // Add aliases that weren't found in workspace scan
       for (const alias of Object.keys(aliases)) {
         if (seen.has(alias)) continue;
         seen.add(alias);
@@ -1238,7 +1063,6 @@ export async function dashboardCommand(): Promise<void> {
       const row = navRows[selectedIndex];
       if (!row) return;
 
-      // Enter on a repo toggles collapse
       if (row.type === "repo") {
         if (collapsedRepos.has(row.repo)) {
           collapsedRepos.delete(row.repo);
@@ -1249,7 +1073,6 @@ export async function dashboardCommand(): Promise<void> {
         return;
       }
 
-      // Enter on workspace header — no-op
       if (row.type === "workspace-header") return;
 
       // Enter on workspace — toggle expand
@@ -1263,10 +1086,10 @@ export async function dashboardCommand(): Promise<void> {
         return;
       }
 
-      // Enter on workspace-member — attach/preview that session
-      const session = row.type === "workspace-member" ? row.session : row.session;
+      // Enter on session or workspace-member — switch to session's tmux session
+      const session = row.session;
 
-      // Restart stopped sessions: re-create tmux session and launch agent
+      // Restart stopped sessions
       if (session.status !== "running") {
         const config = loadConfig();
         const tmuxName = session.tmuxSession;
@@ -1286,14 +1109,10 @@ export async function dashboardCommand(): Promise<void> {
         session.status = "running";
       }
 
-      attachSession(session);
-      render();
-
-      if (previewPaneId && paneExists(previewPaneId)) {
-        try {
-          execFileSync("tmux", ["select-pane", "-t", previewPaneId]);
-        } catch { /* ignore */ }
-      }
+      // Switch to the session's tmux session
+      try {
+        switchClient(session.tmuxSession);
+      } catch { /* ignore */ }
       return;
     }
   });

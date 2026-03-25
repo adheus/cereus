@@ -7,12 +7,7 @@ import {
   isInsideTmux,
 } from "../lib/tmux.js";
 
-interface AttachOptions {
-  split?: boolean;
-  window?: boolean;
-}
-
-export function attachCommand(identifier: string, options: AttachOptions): void {
+export function attachCommand(identifier: string): void {
   const session = findSession(identifier);
   if (!session) {
     console.error(chalk.red(`Session '${identifier}' not found.`));
@@ -25,20 +20,6 @@ export function attachCommand(identifier: string, options: AttachOptions): void 
       chalk.red(`Session '${identifier}' tmux session is not running.`),
     );
     process.exit(1);
-  }
-
-  if (options.split) {
-    if (!isInsideTmux()) {
-      console.error(chalk.red("--split requires running inside a tmux session"));
-      process.exit(1);
-    }
-    const { execFileSync } = require("node:child_process");
-    execFileSync(
-      "tmux",
-      ["join-pane", "-h", "-s", session.tmuxSession],
-      { stdio: "inherit" },
-    );
-    return;
   }
 
   if (isInsideTmux()) {

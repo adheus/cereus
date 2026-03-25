@@ -21,11 +21,7 @@ import {
   isInsideTmux,
   createSession,
   sendKeys,
-  sessionExists,
-  smartSplit,
-  splitPane,
   setPaneTitle,
-  setSessionPaneBorderStatus,
 } from "../lib/tmux.js";
 import { writeContextFile } from "../lib/context.js";
 import {
@@ -110,68 +106,43 @@ export async function newCommand(
   const agentCmd = useContainer
     ? buildContainerAgentCommand(worktreePath, rawAgentCmd, config)
     : rawAgentCmd;
-  let tmuxPane: string | undefined;
+  // All modes create a dedicated tmux session
+  createSession(tmuxName, worktreePath);
+  setPaneTitle(tmuxName, identifier);
+  sendKeys(tmuxName, agentCmd);
 
   switch (mode) {
-    case "smart": {
-      console.log(chalk.blue("▸"), "Smart splitting...");
-      if (!isInsideTmux()) {
-        createSession(tmuxName, worktreePath);
-        setPaneTitle(tmuxName, identifier);
-        sendKeys(tmuxName, agentCmd);
-        console.log(chalk.green("✔"), `Session '${identifier}' started (new tmux session — not inside tmux)`);
-        console.log(`\n  attach:  cereus attach ${identifier}\n`);
+    case "smart":
+    case "window": {
+      if (isInsideTmux()) {
+        console.log(chalk.green("✔"), `Session '${identifier}' started`);
+        console.log(chalk.blue("▸"), "Switching to session...");
+        const { switchClient } = await import("../lib/tmux.js");
+        switchClient(tmuxName);
       } else {
-        const result = smartSplit(worktreePath, config.maxPanesPerWindow, identifier);
-        tmuxPane = result.paneId;
-        setPaneTitle(tmuxPane, identifier);
-        sendKeys(tmuxPane, agentCmd);
-        if (result.createdWindow) {
-          console.log(chalk.green("✔"), `Session '${identifier}' started (new window — panes full)`);
-        } else {
-          console.log(chalk.green("✔"), `Session '${identifier}' started (pane ${tmuxPane})`);
-        }
+        console.log(chalk.green("✔"), `Session '${identifier}' started`);
+        console.log(`\n  attach:  cereus attach ${identifier}\n`);
       }
       break;
     }
 
     case "split": {
-      if (!isInsideTmux()) {
-        console.error(chalk.red("--split requires running inside a tmux session"));
-        process.exit(1);
-      }
-      tmuxPane = splitPane(worktreePath, "h");
-      setPaneTitle(tmuxPane, identifier);
-      sendKeys(tmuxPane, agentCmd);
-      console.log(chalk.green("✔"), `Session '${identifier}' started (split)`);
-      break;
-    }
-
-    case "hidden": {
-      createSession(tmuxName, worktreePath);
-      setPaneTitle(tmuxName, identifier);
-      sendKeys(tmuxName, agentCmd);
-      console.log(chalk.green("✔"), `Session '${identifier}' started (hidden)`);
-      console.log(`\n  attach:  cereus attach ${identifier}`);
-      console.log(`  kill:    cereus kill ${identifier}\n`);
-      break;
-    }
-
-    case "window": {
-      createSession(tmuxName, worktreePath);
-      setPaneTitle(tmuxName, identifier);
-      sendKeys(tmuxName, agentCmd);
       if (isInsideTmux()) {
         console.log(chalk.green("✔"), `Session '${identifier}' started`);
         console.log(chalk.blue("▸"), "Switching to session...");
-        const { execFileSync } = await import("node:child_process");
-        execFileSync("tmux", ["switch-client", "-t", tmuxName], {
-          stdio: "inherit",
-        });
+        const { switchClient } = await import("../lib/tmux.js");
+        switchClient(tmuxName);
       } else {
         console.log(chalk.green("✔"), `Session '${identifier}' started`);
         console.log(`\n  attach:  cereus attach ${identifier}\n`);
       }
+      break;
+    }
+
+    case "hidden": {
+      console.log(chalk.green("✔"), `Session '${identifier}' started (hidden)`);
+      console.log(`\n  attach:  cereus attach ${identifier}`);
+      console.log(`  kill:    cereus kill ${identifier}\n`);
       break;
     }
   }
@@ -183,7 +154,6 @@ export async function newCommand(
     worktreePath,
     branch: identifier,
     tmuxSession: tmuxName,
-    tmuxPane,
     agent,
     prompt: options.prompt,
     container: useContainer || undefined,

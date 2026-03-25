@@ -10,18 +10,20 @@ import {
   detachSessionFromWorkspace,
   type Workspace,
 } from "../lib/workspaces.js";
-import { loadSessions, findSession, type Session } from "../lib/sessions.js";
+import { loadSessions, findSession, updateSession, type Session } from "../lib/sessions.js";
 import { loadConfig } from "../lib/config.js";
 import {
   createSession,
   killSession,
   sessionExists,
-  paneExists,
   splitPaneAt,
   killPane,
   setPaneTitle,
-  setSessionPaneBorderStatus,
   isInsideTmux,
+  switchClient,
+  attachSession,
+  getFirstPane,
+  listSessionPanes,
 } from "../lib/tmux.js";
 
 function generateId(name: string): string {
@@ -29,97 +31,73 @@ function generateId(name: string): string {
   return `ws_${slug}`;
 }
 
-function resolveSessionPaneId(session: Session): string | null {
-  if (session.tmuxPane && paneExists(session.tmuxPane)) {
-    return session.tmuxPane;
-  }
-  if (session.tmuxSession && sessionExists(session.tmuxSession)) {
-    try {
-      const output = execFileSync(
-        "tmux",
-        ["list-panes", "-t", session.tmuxSession, "-F", "#{pane_id}"],
-        { encoding: "utf-8" },
-      ).trim();
-      const panes = output.split("\n").filter(Boolean);
-      return panes[0] || null;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-function getWorkspacePaneIds(tmuxSessionName: string): string[] {
-  try {
-    const output = execFileSync(
-      "tmux",
-      ["list-panes", "-t", tmuxSessionName, "-F", "#{pane_id}"],
-      { encoding: "utf-8" },
-    ).trim();
-    return output.split("\n").filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-function getWorkspacePaneCount(tmuxSessionName: string): number {
-  return getWorkspacePaneIds(tmuxSessionName).length;
-}
-
 /**
- * Arrange session panes into the workspace tmux session using swap-pane.
- * Uses a smart layout: progressively fills a grid, then creates new windows.
+ * Arrange session agent panes into the workspace tmux session.
+ * Only the agent pane is borrowed — editor/terminal sub-panes stay at home.
  */
-function arrangeWorkspacePanes(
+function mountSessionsIntoWorkspace(
   workspaceTmuxSession: string,
   sessions: Session[],
+  workspace: Workspace,
   maxPanes: number,
 ): void {
-  const existingPanes = getWorkspacePaneIds(workspaceTmuxSession);
-  if (existingPanes.length === 0 || sessions.length === 0) return;
-
   let currentPaneIndex = 0;
 
   for (const session of sessions) {
-    const sessionPaneId = resolveSessionPaneId(session);
-    if (!sessionPaneId) continue;
+    // Skip if already mounted
+    if (session.mountedIn === workspace.id) {
+      currentPaneIndex++;
+      continue;
+    }
+
+    // Skip if mounted in another workspace
+    if (session.mountedIn) continue;
+
+    // Get the agent pane from the session's home
+    const agentPaneId = getFirstPane(session.tmuxSession);
+    if (!agentPaneId) continue;
 
     let targetPaneId: string;
 
     if (currentPaneIndex === 0) {
+      // Use the initial pane of the workspace session
+      const existingPanes = listSessionPanes(workspaceTmuxSession);
+      if (existingPanes.length === 0) continue;
       targetPaneId = existingPanes[0];
     } else {
-      const paneCount = getWorkspacePaneCount(workspaceTmuxSession);
+      // Create a new pane using smart layout logic
+      const wsPanes = listSessionPanes(workspaceTmuxSession);
+      const paneCount = wsPanes.length;
 
       if (paneCount >= maxPanes) {
+        // Create a new window within the workspace
         execFileSync(
           "tmux",
           ["new-window", "-t", workspaceTmuxSession, "-c", session.worktreePath],
           { stdio: "ignore" },
         );
-        const newPanes = getWorkspacePaneIds(workspaceTmuxSession);
+        const newPanes = listSessionPanes(workspaceTmuxSession);
         targetPaneId = newPanes[newPanes.length - 1];
       } else {
-        const panes = getWorkspacePaneIds(workspaceTmuxSession);
         let direction: "h" | "v";
         let splitTarget: string;
 
         switch (paneCount) {
           case 1:
             direction = "h";
-            splitTarget = panes[0];
+            splitTarget = wsPanes[0];
             break;
           case 2:
             direction = "v";
-            splitTarget = panes[1];
+            splitTarget = wsPanes[1];
             break;
           case 3:
             direction = "v";
-            splitTarget = panes[0];
+            splitTarget = wsPanes[0];
             break;
           default:
             direction = "h";
-            splitTarget = panes[panes.length - 1];
+            splitTarget = wsPanes[wsPanes.length - 1];
             break;
         }
 
@@ -127,15 +105,17 @@ function arrangeWorkspacePanes(
       }
     }
 
+    // Swap the session's agent pane into the workspace layout
     try {
       execFileSync(
         "tmux",
-        ["swap-pane", "-s", sessionPaneId, "-t", targetPaneId],
+        ["swap-pane", "-s", agentPaneId, "-t", targetPaneId],
         { stdio: "ignore" },
       );
-      setPaneTitle(sessionPaneId, session.id);
+      setPaneTitle(agentPaneId, session.id);
+      updateSession(session.id, { mountedIn: workspace.id });
     } catch {
-      // If swap fails, the target pane stays as-is
+      // If swap fails, skip this session
     }
 
     currentPaneIndex++;
@@ -143,41 +123,46 @@ function arrangeWorkspacePanes(
 }
 
 /**
- * Swap all session panes back from the workspace to their original tmux sessions.
+ * Unmount a single session from a workspace — swap its agent pane back home.
  */
-function restoreWorkspacePanes(
+function unmountSessionFromWorkspace(
   workspaceTmuxSession: string,
-  sessions: Session[],
+  session: Session,
 ): void {
-  for (const session of sessions) {
-    const sessionPaneId = resolveSessionPaneId(session);
-    if (!sessionPaneId) continue;
+  if (!session.mountedIn) return;
 
-    try {
-      const output = execFileSync(
-        "tmux",
-        ["list-panes", "-t", workspaceTmuxSession, "-F", "#{pane_id}\t#{pane_title}"],
-        { encoding: "utf-8" },
-      ).trim();
-      const lines = output.split("\n").filter(Boolean);
-      for (const line of lines) {
-        const [paneId, title] = line.split("\t");
-        if (title === session.id && paneId) {
-          const displacedId = resolveSessionPaneId(session);
-          if (displacedId && displacedId !== paneId) {
-            execFileSync(
-              "tmux",
-              ["swap-pane", "-s", paneId, "-t", displacedId],
-              { stdio: "ignore" },
-            );
-          }
-          break;
+  try {
+    // Find the session's pane in the workspace by title
+    const output = execFileSync(
+      "tmux",
+      ["list-panes", "-t", workspaceTmuxSession, "-F", "#{pane_id}\t#{pane_title}"],
+      { encoding: "utf-8" },
+    ).trim();
+    const lines = output.split("\n").filter(Boolean);
+
+    for (const line of lines) {
+      const [paneId, title] = line.split("\t");
+      if (title === session.id && paneId) {
+        // The displaced pane from the swap is in the session's home tmux session
+        const homePanes = listSessionPanes(session.tmuxSession);
+        if (homePanes.length > 0) {
+          // Swap back: workspace pane → home
+          execFileSync(
+            "tmux",
+            ["swap-pane", "-s", paneId, "-t", homePanes[0]],
+            { stdio: "ignore" },
+          );
         }
+        // Kill the now-empty pane in the workspace
+        killPane(paneId);
+        break;
       }
-    } catch {
-      // ignore
     }
+  } catch {
+    // ignore
   }
+
+  updateSession(session.id, { mountedIn: undefined });
 }
 
 interface WorkspaceCreateOptions {
@@ -241,27 +226,24 @@ export async function workspaceShowCommand(name: string): Promise<void> {
 
   const tmuxName = `cr_${workspace.id}`;
 
-  if (sessionExists(tmuxName)) {
-    killSession(tmuxName);
+  // Create workspace tmux session if it doesn't exist
+  if (!sessionExists(tmuxName)) {
+    const cwd = validSessions[0].worktreePath;
+    createSession(tmuxName, cwd);
   }
 
-  const cwd = validSessions[0].worktreePath;
-  createSession(tmuxName, cwd);
-  setSessionPaneBorderStatus(tmuxName);
   updateWorkspace(workspace.id, { tmuxSession: tmuxName });
 
-  arrangeWorkspacePanes(tmuxName, validSessions, workspace.maxPanes);
+  // Mount sessions into the workspace
+  mountSessionsIntoWorkspace(tmuxName, validSessions, workspace, workspace.maxPanes);
 
+  // Switch or attach
   if (isInsideTmux()) {
     console.log(chalk.green("✔"), `Switching to workspace '${name}'...`);
-    execFileSync("tmux", ["switch-client", "-t", tmuxName], {
-      stdio: "inherit",
-    });
+    switchClient(tmuxName);
   } else {
     console.log(chalk.green("✔"), `Attaching to workspace '${name}'...`);
-    execFileSync("tmux", ["attach-session", "-t", tmuxName], {
-      stdio: "inherit",
-    });
+    attachSession(tmuxName);
   }
 }
 
@@ -296,13 +278,9 @@ export async function workspaceAttachCommand(
     process.exit(1);
   }
 
-  const allWorkspaces = loadWorkspaces();
-  const otherWorkspace = allWorkspaces.find(
-    (o) => o.id !== workspace.id && o.sessionIds.includes(sessionId),
-  );
-  if (otherWorkspace) {
+  if (session.mountedIn) {
     console.error(
-      chalk.red(`Session '${sessionId}' is already in workspace '${otherWorkspace.name}'. Detach it first.`),
+      chalk.red(`Session '${sessionId}' is mounted in workspace '${session.mountedIn}'. Detach it first.`),
     );
     process.exit(1);
   }
@@ -326,6 +304,12 @@ export async function workspaceDetachCommand(
     return;
   }
 
+  // If workspace is active and session is mounted, unmount first
+  const session = findSession(sessionId);
+  if (session?.mountedIn === workspace.id && workspace.tmuxSession && sessionExists(workspace.tmuxSession)) {
+    unmountSessionFromWorkspace(workspace.tmuxSession, session);
+  }
+
   detachSessionFromWorkspace(workspace.id, sessionId);
   console.log(chalk.green("✔"), `Session '${sessionId}' detached from workspace '${name}'.`);
 }
@@ -337,14 +321,21 @@ export async function workspaceDeleteCommand(name: string): Promise<void> {
     process.exit(1);
   }
 
+  // Unmount all sessions and kill workspace tmux session
   if (workspace.tmuxSession && sessionExists(workspace.tmuxSession)) {
     const allSessions = loadSessions();
-    const validSessions = workspace.sessionIds
-      .map((id) => allSessions.find((s) => s.id === id))
-      .filter((s): s is Session => !!s);
-
-    restoreWorkspacePanes(workspace.tmuxSession, validSessions);
+    for (const sid of workspace.sessionIds) {
+      const session = allSessions.find((s) => s.id === sid);
+      if (session?.mountedIn === workspace.id) {
+        unmountSessionFromWorkspace(workspace.tmuxSession, session);
+      }
+    }
     killSession(workspace.tmuxSession);
+  } else {
+    // Clear mountedIn even if tmux session is gone
+    for (const sid of workspace.sessionIds) {
+      updateSession(sid, { mountedIn: undefined });
+    }
   }
 
   removeWorkspace(workspace.id);

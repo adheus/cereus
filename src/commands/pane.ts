@@ -3,7 +3,6 @@ import {
   findSession,
   addSubPane,
   removeSubPane,
-  getAgentPane,
   type SubPane,
 } from "../lib/sessions.js";
 import {
@@ -13,28 +12,8 @@ import {
   setPaneTitle,
   sessionExists,
   smartSplitAt,
+  getFirstPane,
 } from "../lib/tmux.js";
-import { execFileSync } from "node:child_process";
-
-function resolveSessionPaneId(session: ReturnType<typeof findSession>): string | null {
-  if (!session) return null;
-  const agentPaneId = getAgentPane(session);
-  if (agentPaneId && paneExists(agentPaneId)) return agentPaneId;
-  if (session.tmuxSession && sessionExists(session.tmuxSession)) {
-    try {
-      const output = execFileSync(
-        "tmux",
-        ["list-panes", "-t", session.tmuxSession, "-F", "#{pane_id}"],
-        { encoding: "utf-8" },
-      ).trim();
-      const panes = output.split("\n").filter(Boolean);
-      return panes[0] || null;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
 
 interface PaneAddOptions {
   type?: string;
@@ -50,7 +29,7 @@ export async function paneAddCommand(
     process.exit(1);
   }
 
-  if (session.status !== "running") {
+  if (!sessionExists(session.tmuxSession)) {
     console.error(chalk.red(`Session '${sessionId}' is not running.`));
     process.exit(1);
   }
@@ -61,7 +40,12 @@ export async function paneAddCommand(
     process.exit(1);
   }
 
-  const targetPaneId = resolveSessionPaneId(session);
+  if (session.mountedIn) {
+    console.log(chalk.yellow(`Note: Agent pane is mounted in workspace '${session.mountedIn}'. Adding pane to home session.`));
+  }
+
+  // Always target the session's home tmux session
+  const targetPaneId = getFirstPane(session.tmuxSession);
   if (!targetPaneId) {
     console.error(chalk.red("Could not find a live pane for this session."));
     process.exit(1);

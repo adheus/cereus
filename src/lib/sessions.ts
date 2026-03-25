@@ -14,12 +14,13 @@ export interface Session {
   worktreePath: string;
   branch: string;
   tmuxSession: string;
-  tmuxPane?: string;
+  tmuxPane?: string; // deprecated: kept for backward compat, ignored in new code
   agent: string;
   prompt?: string;
   mode: "smart" | "window" | "split" | "hidden";
   container?: boolean;
   panes?: SubPane[];
+  mountedIn?: string; // workspace ID if agent pane is currently borrowed
   status: "running" | "stopped";
   createdAt: string;
 }
@@ -87,8 +88,7 @@ export function removeSubPane(sessionId: string, paneId: string): void {
 
 export function getAgentPane(session: Session): string | undefined {
   const agentSub = session.panes?.find((p) => p.type === "agent");
-  if (agentSub) return agentSub.paneId;
-  return session.tmuxPane;
+  return agentSub?.paneId;
 }
 
 export function getSessionsFilePath(): string {

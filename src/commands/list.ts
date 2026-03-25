@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import { loadSessions, saveSessions } from "../lib/sessions.js";
-import { sessionExists, paneExists } from "../lib/tmux.js";
+import { sessionExists } from "../lib/tmux.js";
 
 export function listCommand(): void {
   const sessions = loadSessions();
@@ -11,11 +11,7 @@ export function listCommand(): void {
   }
 
   for (const session of sessions) {
-    const alive = session.tmuxPane
-      ? paneExists(session.tmuxPane)
-      : sessionExists(session.tmuxSession);
-
-    session.status = alive ? "running" : "stopped";
+    session.status = sessionExists(session.tmuxSession) ? "running" : "stopped";
   }
   saveSessions(sessions);
 
