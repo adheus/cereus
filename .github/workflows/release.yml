@@ -16,12 +16,17 @@ jobs:
         include:
           - os: macos-latest
             suffix: darwin-arm64
-          - os: macos-13-xlarge
+            target: ""
+          - os: macos-latest
             suffix: darwin-x64
+            target: "--target=bun-darwin-x64"
+            extra_pkg: "@opentui/core-darwin-x64@0.1.87"
           - os: ubuntu-24.04-arm
             suffix: linux-arm64
+            target: ""
           - os: ubuntu-latest
             suffix: linux-x64
+            target: ""
 
     runs-on: ${{ matrix.os }}
 
@@ -34,8 +39,12 @@ jobs:
 
       - run: bun install
 
+      - name: Install cross-platform deps
+        if: matrix.extra_pkg
+        run: bun add ${{ matrix.extra_pkg }}
+
       - name: Build native binary
-        run: bun build --compile --minify src/index.ts --outfile dist/cereus-${{ matrix.suffix }}
+        run: bun build --compile --minify ${{ matrix.target }} src/index.ts --outfile dist/cereus-${{ matrix.suffix }}
 
       - uses: actions/upload-artifact@v4
         with:
